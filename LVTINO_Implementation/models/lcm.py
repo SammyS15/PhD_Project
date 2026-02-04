@@ -188,7 +188,7 @@ class LCMWrapper:
         }
 
         # UNet forward pass
-        noise_pred = self.unet(
+        model_output = self.unet(
             z_t,
             t,
             encoder_hidden_states=prompt_embeds,
@@ -196,14 +196,31 @@ class LCMWrapper:
             return_dict=False,
         )[0]
 
-        # LCM directly predicts z_0 (not noise)
-        # The scheduler step gives us the denoised prediction
+        # Use scheduler to get the denoised prediction
+        # LCMScheduler handles the prediction type (epsilon, v_prediction, etc.) internally
+        self.scheduler.set_timesteps(num_inference_steps=4, device=self.device)
+
+        # Get denoised output using scheduler's step
+        # For single-step denoising to z_0, we use the scheduler's conversion
         alpha_t = self.get_alpha_t(timestep)
         sigma_t = torch.sqrt(1 - alpha_t)
 
-        # For LCM, the model predicts x_0 directly via consistency property
-        # z_0 = (z_t - sigma_t * noise_pred) / sqrt(alpha_t)
-        z_0 = (z_t - sigma_t * noise_pred) / torch.sqrt(alpha_t)
+        # LCM with SDXL uses epsilon prediction by default
+        # z_0 = (z_t - sigma_t * epsilon) / sqrt(alpha_t)
+        # But we need to check prediction_type from scheduler config
+        prediction_type = getattr(self.scheduler.config, 'prediction_type', 'epsilon')
+
+        if prediction_type == 'epsilon':
+            z_0 = (z_t - sigma_t * model_output) / torch.sqrt(alpha_t)
+        elif prediction_type == 'v_prediction':
+            # v = sqrt(alpha_t) * epsilon - sqrt(1-alpha_t) * z_0
+            # z_0 = sqrt(alpha_t) * z_t - sqrt(1-alpha_t) * v
+            z_0 = torch.sqrt(alpha_t) * z_t - sigma_t * model_output
+        elif prediction_type == 'sample':
+            z_0 = model_output
+        else:
+            # Default to epsilon
+            z_0 = (z_t - sigma_t * model_output) / torch.sqrt(alpha_t)
 
         return z_0
 
