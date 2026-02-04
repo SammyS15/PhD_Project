@@ -165,8 +165,12 @@ class LATINOSolver:
         if prompt:
             prompt_embeds, pooled_prompt_embeds = self.lcm._encode_prompt(prompt)
 
-        # Initialize: x_0 = A^T(y)
-        x = self.operator.adjoint(y)
+        # Initialize: bicubic upsampling gives better starting point than A^T(y)
+        # The adjoint has scaling that produces very small values, which causes
+        # issues with the VAE. Bicubic upsampling preserves the value range.
+        x = torch.nn.functional.interpolate(
+            y, scale_factor=self.operator.scale_factor, mode='bicubic', align_corners=False
+        )
 
         # Ensure proper range
         x = torch.clamp(x, 0.0, 1.0)
