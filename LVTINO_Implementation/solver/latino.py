@@ -75,10 +75,16 @@ class LATINOSolver:
         Returns:
             Denoised image [B, C, H, W] in range [0, 1]
         """
-        # Encode to latent space - cast to model dtype for compatibility
+        # SDXL VAE is numerically unstable in float16, so we keep VAE ops in float32
+        # Only the UNet (denoising) runs in float16 for memory efficiency
         x_norm = 2.0 * x - 1.0  # [0,1] -> [-1,1]
-        x_norm = x_norm.to(dtype=self.lcm.dtype)
-        z = self.vae.encode(x_norm).latent_dist.sample() * self.scaling_factor
+
+        # Encode in float32 (VAE stability)
+        x_norm_f32 = x_norm.to(dtype=torch.float32)
+        z = self.vae.encode(x_norm_f32).latent_dist.sample() * self.scaling_factor
+
+        # Convert to model dtype for UNet operations
+        z = z.to(dtype=self.lcm.dtype)
 
         # Add noise at timestep t
         z_t = self.lcm.add_noise(z, timestep)
@@ -86,13 +92,11 @@ class LATINOSolver:
         # Denoise using LCM (single step to z_0)
         z_0 = self.lcm.denoise(z_t, timestep, prompt_embeds, pooled_prompt_embeds)
 
-        # Decode back to image space
-        x_decoded = self.vae.decode(z_0 / self.scaling_factor).sample
+        # Decode in float32 (VAE stability)
+        z_0_f32 = z_0.to(dtype=torch.float32)
+        x_decoded = self.vae.decode(z_0_f32 / self.scaling_factor).sample
         x_out = (x_decoded + 1.0) / 2.0  # [-1,1] -> [0,1]
         x_out = torch.clamp(x_out, 0.0, 1.0)
-
-        # Cast back to input dtype (float32) for compatibility with operators
-        x_out = x_out.to(dtype=x.dtype)
 
         return x_out
 

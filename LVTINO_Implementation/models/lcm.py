@@ -81,6 +81,10 @@ class LCMWrapper:
         # Extract components
         self.vae = self.pipe.vae
         self.unet = self.pipe.unet
+
+        # SDXL VAE is numerically unstable in float16 - keep it in float32
+        self.vae = self.vae.to(dtype=torch.float32)
+        print("VAE converted to float32 for numerical stability")
         self.scheduler = self.pipe.scheduler
         self.tokenizer = self.pipe.tokenizer
         self.tokenizer_2 = self.pipe.tokenizer_2
