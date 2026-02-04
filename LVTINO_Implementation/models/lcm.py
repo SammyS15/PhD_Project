@@ -103,9 +103,10 @@ class LCMWrapper:
             timestep: Diffusion timestep
 
         Returns:
-            alpha_t value as tensor
+            alpha_t value as tensor on correct device/dtype
         """
-        return self.scheduler.alphas_cumprod[timestep]
+        alpha_t = self.scheduler.alphas_cumprod[timestep]
+        return alpha_t.to(device=self.device, dtype=self.dtype)
 
     def _encode_prompt(
         self,
