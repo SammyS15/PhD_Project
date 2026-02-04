@@ -75,8 +75,9 @@ class LATINOSolver:
         Returns:
             Denoised image [B, C, H, W] in range [0, 1]
         """
-        # Encode to latent space
+        # Encode to latent space - cast to model dtype for compatibility
         x_norm = 2.0 * x - 1.0  # [0,1] -> [-1,1]
+        x_norm = x_norm.to(dtype=self.lcm.dtype)
         z = self.vae.encode(x_norm).latent_dist.sample() * self.scaling_factor
 
         # Add noise at timestep t
@@ -89,6 +90,9 @@ class LATINOSolver:
         x_decoded = self.vae.decode(z_0 / self.scaling_factor).sample
         x_out = (x_decoded + 1.0) / 2.0  # [-1,1] -> [0,1]
         x_out = torch.clamp(x_out, 0.0, 1.0)
+
+        # Cast back to input dtype (float32) for compatibility with operators
+        x_out = x_out.to(dtype=x.dtype)
 
         return x_out
 
@@ -246,13 +250,16 @@ class LATINOSolverLatent(LATINOSolver):
         Returns:
             Denoised latent [B, 4, H//8, W//8]
         """
+        original_dtype = z.dtype
+        z = z.to(dtype=self.lcm.dtype)
+
         # Add noise at timestep t
         z_t = self.lcm.add_noise(z, timestep)
 
         # Denoise using LCM
         z_0 = self.lcm.denoise(z_t, timestep, prompt_embeds, pooled_prompt_embeds)
 
-        return z_0
+        return z_0.to(dtype=original_dtype)
 
     @torch.no_grad()
     def solve_latent(
