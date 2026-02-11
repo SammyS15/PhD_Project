@@ -1,0 +1,10 @@
+torch
+torchvision
+Pillow
+tqdm
+diffusers
+huggingface_hub
+deepinv
+accelerate
+datasets
+transformers

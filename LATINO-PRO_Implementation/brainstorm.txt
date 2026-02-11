@@ -1,0 +1,36 @@
+I want to implement LATINO (Algorithm 1) from LATINO-PRO: LAtent consisTency INverse sOlver with PRompt Optimization
+
+given 
+    - x^(0) = A^{†}y
+    - text prompt c
+    - number of step N = 4 or 8
+    - latent consistency model Gθ
+    - latent space decoder D
+    - latent space encoder E
+    - sequences {t_{k}, δ_{k}}^{N}_{k=1}. 
+
+for k = 1, . . . , N do 
+    ϵ ∼ N(0, Id) 
+    z_{t_{k}}^{(k)} ← \sqrt{α_{t_{k}}} E(x^{(k−1)}) + \sqrt{1 − α_{t_{k}}} ϵ ▷ Encode
+    u^{(k)} ← D(Gθ (z_{t_{k}}^{(k)}, t_{k}, c)) ▷ Decode 
+    x(k) ← prox_{\delta_{k} g_{y}} (u(k)) ▷ g_{y} : x → − log p(y|x) 
+end for
+return x^(N)
+
+So what do I need first?
+- Define what x^(0) is --> I know A^{†} means an pseudo-inverse matrix operator 
+    - x^(0) is the initialization 
+- What does Sequences Mean?
+    - t_{k} —> the noise schedule timesteps
+    - \delta_{k} — the proximal operator strength
+- What is $\alpha$ 
+    - $$\bar{\alpha}t = \prod{s=1}^{t} (1 - \beta_s)$$
+    - where \beta_{s} is a variance schedule 
+        — a sequence of small values that define how much noise is added at each step.
+
+Algorithm Explanation
+    - First you sample from a Gaussian
+    - Next you bascially employ the forward time process (noise up the data) which follows the SDE formalism and endode the result
+    - Then you take this Consistency Model (G(\theta)) to avoid the need to do the denosing and then Decode 
+    - Apply a Proximal Operator to push the decoded sample closer to the truth
+    - Repeat for N = 4 or 8 times
