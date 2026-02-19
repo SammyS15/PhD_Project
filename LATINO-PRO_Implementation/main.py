@@ -44,7 +44,7 @@ from PIL import Image
 
 def load_pipeline(device="cuda"):
     """Load SDXL pipeline with DMD2 4-step distilled UNet and LCM scheduler."""
-    # VAE with fp16-safe fix
+    # VAE with fp16-safe fix (designed to work in float16)
     vae = AutoencoderKL.from_pretrained(
         "madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16
     )
@@ -71,27 +71,26 @@ def load_pipeline(device="cuda"):
     ).to(device)
     pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
 
-    # Force VAE to float32 — SDXL VAE is numerically unstable in float16
-    pipe.vae = pipe.vae.to(dtype=torch.float32)
+    # Keep VAE in float16 -- madebyollin/sdxl-vae-fp16-fix is designed for this
+    # Reference code uses .half() for encoding
 
     return pipe
 
 
 # ============================================================
-# VAE Encode / Decode
+# VAE Encode / Decode (matching reference: encode in fp16)
 # ============================================================
 
 def vae_encode(vae, x, scaling_factor):
     """Encode image to latent space.  x in [0, 1] → z."""
-    x_norm = (2.0 * x - 1.0).to(dtype=torch.float32)
+    x_norm = (2.0 * x - 1.0).clip(-1, 1).half()  # reference uses .half()
     z = vae.encode(x_norm).latent_dist.mean * scaling_factor
     return z
 
 
 def vae_decode(vae, z, scaling_factor):
     """Decode latent to image space.  z → x in [0, 1]."""
-    z_f32 = z.to(dtype=torch.float32)
-    x = vae.decode(z_f32 / scaling_factor).sample
+    x = vae.decode(z / scaling_factor).sample.clip(-1, 1)
     x = (x + 1.0) / 2.0
     return x.clamp(0.0, 1.0)
 
@@ -150,10 +149,11 @@ def consistency_denoise(pipe, z_t, timestep, prompt_embeds, pooled_prompt_embeds
 # Proximal Operator  (uses deepinv's built-in prox_l2)
 # ============================================================
 
-def get_delta(t_k, df, scale_factor=4):
-    """Adaptive δ_k based on timestep and measurement error (from reference)."""
+def get_delta(t_k, df, scale_factor=16):
+    """Adaptive δ_k based on timestep and measurement error.
+    Matches reference noise_schemes.py for super_resolution_bicubic."""
     if scale_factor <= 16:
-        return 1.0 * df / 10.0 if t_k > 300 else 0.5 * df / 10.0
+        return 3.0 * df / 10.0 if t_k > 300 else 2.0 * df / 10.0
     else:
         return 1.5 * df / 10.0 if t_k > 300 else 3.0 * df / 10.0
 
@@ -169,8 +169,8 @@ def get_timesteps(N):
 # ============================================================
 
 @torch.no_grad()
-def latino(pipe, y, physics, prompt="a high quality photo", N=4,
-           sigma_y=0.05, scale_factor=4, device="cuda", verbose=True):
+def latino(pipe, y, physics, prompt="a photo of a face", N=4,
+           sigma_y=0.01, scale_factor=16, device="cuda", verbose=True):
     """
     LATINO: LAtent consisTency INverse sOlver.
 
@@ -195,7 +195,7 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
 
     # Proximal step operates in [-1, 1] range (matching reference calibration)
     y_norm = (y * 2 - 1).float()
-    sigma_y_norm = sigma_y * 2
+    sigma_y_norm = sigma_y * 2  # scale sigma to [-1,1] range
 
     # Encode text prompt  (no classifier-free guidance for DMD2)
     prompt_embeds, _, pooled_prompt_embeds, _ = pipe.encode_prompt(
@@ -207,8 +207,9 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
     B, C, H_low, W_low = y.shape
     H, W = H_low * scale_factor, W_low * scale_factor
 
-    # ---- x^(0): initialise with bicubic upsampling of y ----
-    x = F.interpolate(y, size=(H, W), mode="bicubic", align_corners=False)
+    # ---- x^(0): initialise with A^T(y) (adjoint operator, matching reference) ----
+    x_init_norm = physics.A_adjoint(y_norm).clamp(-1, 1)
+    x = (x_init_norm + 1) / 2  # back to [0,1]
     x = x.clamp(0.0, 1.0)
 
     pbar = tqdm(enumerate(timesteps), total=len(timesteps),
@@ -235,17 +236,21 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
         u = vae_decode(vae, z_0, s)
 
         # 5) Proximal step:  x^{k} = prox_{δ_k · g_y}(u^{k})
-        #    Operate in [-1, 1] range; use δ_k directly as gamma
+        #    gamma = delta * (1 - alpha_t) / sigma_y^2  (from reference noise_schemes.py)
         u_norm = (u * 2 - 1).float()
 
         df = torch.norm(physics.A(u_norm) - y_norm).item()
         delta_k = get_delta(t_k, df, scale_factor=scale_factor)
 
-        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=delta_k)
+        alpha_t_val = alphas_cumprod[t_k].item()
+        var_x_zt = 1.0 - alpha_t_val
+        gamma = delta_k * var_x_zt / (sigma_y_norm ** 2)
+
+        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=gamma)
         x = ((prox_x_norm + 1) / 2).clamp(0.0, 1.0)
 
         if verbose:
-            pbar.set_postfix(t=t_k, gamma=f"{delta_k:.4f}", df=f"{df:.4f}")
+            pbar.set_postfix(t=t_k, delta=f"{delta_k:.2f}", gamma=f"{gamma:.2f}", df=f"{df:.4f}")
 
     return x
 
@@ -274,13 +279,13 @@ def main():
                         help="Path to ground-truth image")
     parser.add_argument("--output", type=str, default="output",
                         help="Output directory")
-    parser.add_argument("--scale-factor", type=int, default=4,
-                        help="Downsampling scale factor")
+    parser.add_argument("--scale-factor", type=int, default=16,
+                        help="Downsampling scale factor (paper default: 16)")
     parser.add_argument("--N", type=int, default=4, choices=[4, 8],
                         help="Number of LATINO iterations")
-    parser.add_argument("--sigma-y", type=float, default=0.05,
-                        help="Observation noise std-dev")
-    parser.add_argument("--prompt", type=str, default="a high quality photo",
+    parser.add_argument("--sigma-y", type=float, default=0.01,
+                        help="Observation noise std-dev (paper default for x16: 0.01)")
+    parser.add_argument("--prompt", type=str, default="a photo of a face",
                         help="Text conditioning prompt")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device (cuda or cpu)")
@@ -309,18 +314,18 @@ def main():
     gt = transform(image).unsqueeze(0).to(device)  # [1, 3, H, W]
 
     # ---- Forward model (bicubic downsampling) ----
+    noise_model = dinv.physics.GaussianNoise(sigma=args.sigma_y)
     physics = dinv.physics.Downsampling(
         img_size=(3, target_size, target_size),
         factor=args.scale_factor,
         filter="bicubic",
+        padding="reflect",
+        noise_model=noise_model,
         device=device,
     )
 
     # ---- Create degraded observation  y = A(x) + noise ----
-    y = physics.A(gt)
-    if args.sigma_y > 0:
-        y = y + args.sigma_y * torch.randn_like(y)
-        y = y.clamp(0.0, 1.0)
+    y = physics(gt)  # noise applied automatically via noise_model
 
     # ---- Load SDXL + DMD2 pipeline ----
     print("Loading SDXL + DMD2 pipeline...")
@@ -340,7 +345,8 @@ def main():
 
     # ---- Save outputs ----
     save_image(gt, output_dir / "ground_truth.png")
-    y_up = F.interpolate(y, size=(1024, 1024), mode="bicubic", align_corners=False)
+    y_up = F.interpolate(y, size=(target_size, target_size), mode="bicubic",
+                         align_corners=False)
     save_image(y_up.clamp(0, 1), output_dir / "degraded_bicubic.png")
     save_image(result, output_dir / "latino_result.png")
 
