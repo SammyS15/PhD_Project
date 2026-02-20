@@ -542,7 +542,7 @@ axes[1].imshow(y_up[0].cpu().permute(1, 2, 0))
 axes[1].set_title(f"Degraded ({DEGRADATION_TYPE}) -- PSNR {baseline_psnr:.2f} dB")
 axes[1].axis("off")
 plt.tight_layout()
-plt.savefig(RESULT_DIR / "Degraded_Image.png", dpi=150, bbox_inches="tight")
+# plt.savefig(RESULT_DIR / "Degraded_Image.png", dpi=150, bbox_inches="tight")
 
 pipe = load_pipeline(device=device)
 print("Pipeline loaded.")
@@ -576,7 +576,7 @@ gt_img  = gt[0].cpu().permute(1, 2, 0)
 res_img = result[0].cpu().permute(1, 2, 0).clamp(0, 1)
 
 # GT - LATINO result  (amplified for visibility)
-amp = 5
+amp = 1
 diff_gt_latino = (gt_img - res_img).abs() * amp
 
 # Degraded observation vs re-degraded LATINO result
@@ -624,13 +624,13 @@ axes[1, 2].set_title(f"|y - A(LATINO)| x{amp}  (should be noise)")
 axes[1, 2].axis("off")
 
 plt.tight_layout()
-plt.savefig(RESULT_DIR / "comparison.png", dpi=150, bbox_inches="tight")
-print(f"Saved comparison to {RESULT_DIR}/comparison.png")
+plt.savefig(RESULT_DIR / "LATINO_Results_Prompt_Conditional.png", dpi=150, bbox_inches="tight")
+print(f"Saved comparison to {RESULT_DIR}/LATINO_Results_Prompt_Conditional.png")
 
-save_image(gt, RESULT_DIR / "ground_truth.png")
-save_image(y_disp.clamp(0, 1), RESULT_DIR / f"degraded_{DEGRADATION_TYPE}.png")
-save_image(result.clamp(0, 1), RESULT_DIR / "latino_result.png")
-print(f"Images saved to {RESULT_DIR}/")
+# save_image(gt, RESULT_DIR / "ground_truth.png")
+# save_image(y_disp.clamp(0, 1), RESULT_DIR / f"degraded_{DEGRADATION_TYPE}.png")
+# save_image(result.clamp(0, 1), RESULT_DIR / "latino_result.png")
+# print(f"Images saved to {RESULT_DIR}/")
 
 # ---- Unconditional LATINO ----
 N = 8
@@ -690,8 +690,8 @@ axes[1, 2].set_title(f"|y - A(LATINO)| x{amp}  (should be noise)")
 axes[1, 2].axis("off")
 
 plt.tight_layout()
-plt.savefig(RESULT_DIR / "comparison_unconditional.png", dpi=150, bbox_inches="tight")
-print(f"Saved comparison to {RESULT_DIR}/comparison_unconditional.png")
+plt.savefig(RESULT_DIR / "LATINO_Results_Unconditional.png", dpi=150, bbox_inches="tight")
+print(f"Saved comparison to {RESULT_DIR}/LATINO_Results_Unconditional.png")
 
-save_image(result_unc.clamp(0, 1), RESULT_DIR / "latino_result_unconditional.png")
-print(f"All images saved to {RESULT_DIR}/")
+# save_image(result_unc.clamp(0, 1), RESULT_DIR / "latino_result_unconditional.png")
+# print(f"All images saved to {RESULT_DIR}/")
