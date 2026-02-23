@@ -1,9 +1,21 @@
+# run_latino_scale_factor_16.py
+# Scale factor 16 version matching the paper's default settings.
+#
+# Key differences from run_latino.py (scale_factor=4):
+#   - SCALE_FACTOR = 16  (paper default for bicubic SR)
+#   - SIGMA_Y = 0.01     (paper default for x16)
+#   - TARGET_SIZE = 896   (1024 // 128 * 128, divisible by 16*8=128)
+#   - Proximal gamma uses the paper's formula:
+#       gamma = delta_k * (1 - alpha_t) / sigma_y_norm^2
+#     instead of passing delta_k directly
+#   - Initialization uses A_adjoint(y) (adjoint operator) matching the
+#     paper's x^(0) = A^{dagger} y, rather than naive bicubic upsample
+
 import torch
 import torch.nn.functional as F
 from pathlib import Path
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from datasets import load_dataset
 
 from diffusers import (
     AutoencoderKL,
@@ -22,26 +34,20 @@ device = torch.device("cpu")
 
 print(f"PyTorch: {torch.__version__}")
 
-
-# print(f"CUDA available: {torch.cuda.is_available()}")
-# if torch.cuda.is_available():
-#     print(f"GPU: {torch.cuda.get_device_name(0)}")
-# print("CUDA available:", torch.cuda.is_available())
-# print("GPU name:", torch.cuda.get_device_name(0))
-
 # ---- Experiment parameters (edit these) ----
-IMAGE_PATH   = "/home/sammys15/scratch/PhD_Project/LATINO-PRO_Implementation/sample.png"            # path to your ground-truth image
+IMAGE_PATH   = "/home/sammys15/scratch/PhD_Project/LATINO-PRO_Implementation/sample.png"
+IMAGE_PATH   = "/home/sammys15/scratch/LATINO-PRO/samples/60007.png"                                # Path to the Default Image in LATINO Repo
 N            = 4                       # LATINO iterations (4 or 8)
-SIGMA_Y      = 0.05                    # observation noise std-dev
+SIGMA_Y      = 0.01                    # observation noise std-dev (paper default for x16)
 PROMPT       = "a high quality photo"  # text conditioning
-OUTPUT_DIR   = "/home/sammys15/scratch/PhD_Project/LATINO-PRO_Implementation/Output_Results"
+OUTPUT_DIR   = "/home/sammys15/scratch/PhD_Project/LATINO-PRO_Implementation/Output_Results_x16"
 
 # ---- Degradation type (change this to switch experiments) ----
 # Options: "bicubic", "gaussian_blur", "inpainting"
 DEGRADATION_TYPE = "bicubic"
 
 # Bicubic super-resolution parameters
-SCALE_FACTOR = 4                       # downsampling factor
+SCALE_FACTOR = 16                      # paper default for SR
 
 # Gaussian blur parameters
 BLUR_SIGMA   = 3.0                     # std-dev of the Gaussian kernel
@@ -71,6 +77,7 @@ else:
 print(f"Using device: {device}")
 
 # Dimension must be divisible by scale_factor * 8
+# For scale_factor=16: divisor = 128, so TARGET_SIZE = 896
 divisor = SCALE_FACTOR * 8
 TARGET_SIZE = (1024 // divisor) * divisor
 print(f"Target size: {TARGET_SIZE}x{TARGET_SIZE}  (divisible by {divisor})")
@@ -203,8 +210,9 @@ def consistency_denoise(pipe, z_t, timestep, prompt_embeds, pooled_prompt_embeds
 # Proximal Operator  (uses deepinv's built-in prox_l2)
 # ============================================================
 
-def get_delta(t_k, df, scale_factor=4):
-    """Adaptive delta_k based on timestep and measurement error (from reference)."""
+def get_delta(t_k, df, scale_factor=16):
+    """Adaptive delta_k based on timestep and measurement error.
+    Matches reference noise_schemes.py for super_resolution_bicubic."""
     if scale_factor <= 16:
         return 3.0 * df / 10.0 if t_k > 300 else 2.0 * df / 10.0
     else:
@@ -234,7 +242,7 @@ def compute_psnr(pred, target):
 # ============================================================
 
 def build_physics(degradation_type, img_size, device,
-                  scale_factor=4, blur_sigma=3.0, mask_ratio=0.5):
+                  scale_factor=16, blur_sigma=3.0, mask_ratio=0.5):
     """
     Factory function: create the deepinv physics operator for the chosen
     degradation experiment.
@@ -279,30 +287,43 @@ def build_physics(degradation_type, img_size, device,
     return physics
 
 
-def build_initial_estimate(y, degradation_type, target_h, target_w):
+def build_initial_estimate(y, physics, degradation_type, target_h, target_w):
     """
     Create the initial estimate x^(0) from the observation y.
 
-    For bicubic SR the observation is low-res, so we upsample.
-    For blur and inpainting the observation is already full-res,
-    so we just use y directly.
+    Uses A_adjoint(y) (the adjoint/pseudo-inverse operator) which matches
+    the paper's x^(0) = A^{dagger} y.  For bicubic SR this is a learned
+    upsampling; for blur it inverts the convolution; for inpainting it
+    fills the masked pixels with zeros.
+    """
+    # Operate in [-1, 1] range for the adjoint, then convert back to [0, 1]
+    y_norm = (y * 2 - 1).float()
+    x_init_norm = physics.A_adjoint(y_norm).clamp(-1, 1)
+    x = (x_init_norm + 1) / 2
+    return x.clamp(0.0, 1.0)
+
+
+def build_display_estimate(y, degradation_type, target_h, target_w):
+    """
+    Create a displayable version of a measurement y at full resolution.
+    For bicubic SR the observation is low-res, so we bicubic-upsample.
+    For blur and inpainting the observation is already full-res.
     """
     if degradation_type == "bicubic":
         x0 = F.interpolate(y, size=(target_h, target_w),
                            mode="bicubic", align_corners=False)
         return x0.clamp(0.0, 1.0)
     else:
-        # gaussian_blur and inpainting: y is already (B, C, H, W)
         return y.clone().clamp(0.0, 1.0)
 
 
 # ============================================================
-# LATINO  --  Algorithm 1
+# LATINO  --  Algorithm 1 (with paper-correct proximal gamma)
 # ============================================================
 
 @torch.no_grad()
 def latino(pipe, y, physics, prompt="a high quality photo", N=4,
-           sigma_y=0.05, scale_factor=4, degradation_type="bicubic",
+           sigma_y=0.01, scale_factor=16, degradation_type="bicubic",
            target_size_hw=None, disable_proximal=False,
            device="cuda", verbose=True):
     """
@@ -335,6 +356,7 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
 
     # Proximal step operates in [-1, 1] range (matching reference calibration)
     y_norm = (y * 2 - 1).float()
+    sigma_y_norm = sigma_y * 2  # scale sigma to [-1, 1] range
 
     # Encode text prompt  (no classifier-free guidance for DMD2)
     prompt_embeds, _, pooled_prompt_embeds, _ = pipe.encode_prompt(
@@ -351,8 +373,8 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
     else:
         H, W = H_y, W_y   # blur / inpainting: same resolution
 
-    # x^(0): build initial estimate depending on degradation type
-    x = build_initial_estimate(y, degradation_type, H, W)
+    # x^(0): use adjoint operator (paper's A^{dagger} y)
+    x = build_initial_estimate(y, physics, degradation_type, H, W)
 
     pbar = tqdm(enumerate(timesteps), total=len(timesteps),
                 desc="LATINO") if verbose else enumerate(timesteps)
@@ -378,24 +400,31 @@ def latino(pipe, y, physics, prompt="a high quality photo", N=4,
         u = vae_decode(vae, z_0, s)
 
         # 5) Proximal step:  x^{k} = prox_{delta_k * g_y}(u^{k})
-        #    Operate in [-1, 1] range; use delta_k directly as gamma
+        #    gamma = delta_k * (1 - alpha_t) / sigma_y_norm^2
+        #    (from reference noise_schemes.py)
         u_norm = (u * 2 - 1).float()
 
         df = torch.norm(physics.A(u_norm) - y_norm).item()
         delta_k = get_delta(t_k, df, scale_factor=scale_factor)
+
+        alpha_t_val = alphas_cumprod[t_k].item()
+        var_x_zt = 1.0 - alpha_t_val
+        gamma = delta_k * var_x_zt / (sigma_y_norm ** 2)
         if disable_proximal:
             delta_k = 0.01          # ablation: diffusion prior only, no data fidelity
-        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=delta_k)
+        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=gamma)
         x = ((prox_x_norm + 1) / 2).clamp(0.0, 1.0)
 
         if verbose:
-            pbar.set_postfix(t=t_k, gamma=f"{delta_k:.4f}", df=f"{df:.4f}")
+            pbar.set_postfix(t=t_k, delta=f"{delta_k:.2f}",
+                             gamma=f"{gamma:.2f}", df=f"{df:.4f}")
 
     return x
 
+
 @torch.no_grad()
 def latino_unconditional(pipe, y, physics, N=4,
-                         sigma_y=0.05, scale_factor=4, degradation_type="bicubic",
+                         sigma_y=0.01, scale_factor=16, degradation_type="bicubic",
                          target_size_hw=None, disable_proximal=False,
                          device="cuda", verbose=True):
     """
@@ -425,6 +454,7 @@ def latino_unconditional(pipe, y, physics, N=4,
     print(f'Time Steps: {timesteps}')
 
     y_norm = (y * 2 - 1.0).float()
+    sigma_y_norm = sigma_y * 2
 
     B, C, H_y, W_y = y.shape
     if degradation_type == "bicubic":
@@ -434,8 +464,8 @@ def latino_unconditional(pipe, y, physics, N=4,
     else:
         H, W = H_y, W_y
 
-    # x^(0): build initial estimate depending on degradation type
-    x = build_initial_estimate(y, degradation_type, H, W)
+    # x^(0): use adjoint operator (paper's A^{dagger} y)
+    x = build_initial_estimate(y, physics, degradation_type, H, W)
 
     # Create unconditional (zero) embeddings
     dummy_text_embed = torch.zeros((B, 1, pipe.unet.config.cross_attention_dim), device=device)
@@ -462,17 +492,22 @@ def latino_unconditional(pipe, y, physics, N=4,
         # 4) Decode latent
         u = vae_decode(vae, z_0, s)
 
-        # 5) Proximal step
+        # 5) Proximal step (paper-correct gamma formula)
         u_norm = (u * 2 - 1).float()
         df = torch.norm(physics.A(u_norm) - y_norm).item()
         delta_k = get_delta(t_k, df, scale_factor=scale_factor)
+
+        alpha_t_val = alphas_cumprod[t_k].item()
+        var_x_zt = 1.0 - alpha_t_val
+        gamma = delta_k * var_x_zt / (sigma_y_norm ** 2)
         if disable_proximal:
             delta_k = 0.01          # ablation: diffusion prior only, no data fidelity
-        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=delta_k)
+        prox_x_norm = physics.prox_l2(u_norm, y=y_norm, gamma=gamma)
         x = ((prox_x_norm + 1) / 2).clamp(0.0, 1.0)
 
         if verbose:
-            pbar.set_postfix(t=t_k, gamma=f"{delta_k:.4f}", df=f"{df:.4f}")
+            pbar.set_postfix(t=t_k, delta=f"{delta_k:.2f}",
+                             gamma=f"{gamma:.2f}", df=f"{df:.4f}")
 
     return x
 
@@ -528,8 +563,8 @@ if SIGMA_Y > 0:
 
 print(f"Observation y shape: {y.shape}")
 
-# Baseline: naive reconstruction (bicubic upsample for SR, raw y for others)
-y_up = build_initial_estimate(y, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
+# Baseline: naive reconstruction for display and PSNR reference
+y_up = build_display_estimate(y, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
 baseline_psnr = compute_psnr(y_up, gt)
 print(f"Baseline PSNR ({DEGRADATION_TYPE}): {baseline_psnr:.2f} dB")
 
@@ -542,7 +577,7 @@ axes[1].imshow(y_up[0].cpu().permute(1, 2, 0))
 axes[1].set_title(f"Degraded ({DEGRADATION_TYPE}) -- PSNR {baseline_psnr:.2f} dB")
 axes[1].axis("off")
 plt.tight_layout()
-# plt.savefig(RESULT_DIR / "Degraded_Image.png", dpi=150, bbox_inches="tight")
+# plt.savefig(Path(OUTPUT_DIR) / "Degraded_Image.png", dpi=150, bbox_inches="tight")
 
 pipe = load_pipeline(device=device)
 print("Pipeline loaded.")
@@ -553,9 +588,10 @@ print(f"  UNet dtype: {pipe.unet.dtype}")
 
 # ---- Conditional LATINO ----
 N = 8
+PROMPT = "a photo of a red sports car"
 result = latino(
     pipe, y, physics,
-    prompt=ACTIVE_PROMPT,
+    prompt=PROMPT,
     N=N,
     sigma_y=SIGMA_Y,
     scale_factor=SCALE_FACTOR,
@@ -590,13 +626,13 @@ diff_degraded = (y_cpu - result_degraded).abs() * amp
 diff_degraded_img = diff_degraded[0].permute(1, 2, 0)
 
 # Also prepare displayable versions of y and A(result)
-y_disp = build_initial_estimate(y_cpu, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
+y_disp = build_display_estimate(y_cpu, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
 y_disp_img = y_disp[0].permute(1, 2, 0).clamp(0, 1)
-res_deg_disp = build_initial_estimate(result_degraded, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
+res_deg_disp = build_display_estimate(result_degraded, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
 res_deg_disp_img = res_deg_disp[0].permute(1, 2, 0).clamp(0, 1)
 
 fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-fig.suptitle(f"Conditional LATINO  --  {DEGRADATION_TYPE}  (N={N}){_mode_tag}", fontsize=16)
+fig.suptitle(f"Conditional LATINO  --  {DEGRADATION_TYPE}  (N={N}, x{SCALE_FACTOR})", fontsize=16)
 
 # Row 1: GT vs LATINO result & their difference
 axes[0, 0].imshow(gt_img)
@@ -628,10 +664,11 @@ plt.tight_layout()
 plt.savefig(RESULT_DIR / "LATINO_Results_Prompt_Conditional.png", dpi=150, bbox_inches="tight")
 print(f"Saved comparison to {RESULT_DIR}/LATINO_Results_Prompt_Conditional.png")
 
-# save_image(gt, RESULT_DIR / "ground_truth.png")
-# save_image(y_disp.clamp(0, 1), RESULT_DIR / f"degraded_{DEGRADATION_TYPE}.png")
-# save_image(result.clamp(0, 1), RESULT_DIR / "latino_result.png")
-# print(f"Images saved to {RESULT_DIR}/")
+# out = Path(OUTPUT_DIR)
+# save_image(gt, out / "ground_truth.png")
+# save_image(y_disp.clamp(0, 1), out / f"degraded_{DEGRADATION_TYPE}.png")
+# save_image(result.clamp(0, 1), out / "latino_result.png")
+# print(f"Images saved to {out}/")
 
 # ---- Unconditional LATINO ----
 N = 8
@@ -659,11 +696,11 @@ amp = 5
 diff_degraded_unc = (y_cpu - result_unc_degraded).abs() * amp
 diff_degraded_unc_img = diff_degraded_unc[0].permute(1, 2, 0)
 
-res_unc_deg_disp = build_initial_estimate(result_unc_degraded, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
+res_unc_deg_disp = build_display_estimate(result_unc_degraded, DEGRADATION_TYPE, TARGET_SIZE, TARGET_SIZE)
 res_unc_deg_disp_img = res_unc_deg_disp[0].permute(1, 2, 0).clamp(0, 1)
 
 fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-fig.suptitle(f"Unconditional LATINO  --  {DEGRADATION_TYPE}  (N={N}){_mode_tag}", fontsize=16)
+fig.suptitle(f"Unconditional LATINO  --  {DEGRADATION_TYPE}  (N={N}, x{SCALE_FACTOR})", fontsize=16)
 
 # Row 1: GT vs LATINO result & their difference
 axes[0, 0].imshow(gt_img)
@@ -695,5 +732,5 @@ plt.tight_layout()
 plt.savefig(RESULT_DIR / "LATINO_Results_Unconditional.png", dpi=150, bbox_inches="tight")
 print(f"Saved comparison to {RESULT_DIR}/LATINO_Results_Unconditional.png")
 
-# save_image(result_unc.clamp(0, 1), RESULT_DIR / "latino_result_unconditional.png")
-# print(f"All images saved to {RESULT_DIR}/")
+# save_image(result_unc.clamp(0, 1), out / "latino_result_unconditional.png")
+# print(f"All images saved to {out}/")

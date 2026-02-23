@@ -1,3 +1,11 @@
+23/02/2026 Ideas
+1. Test against the LATINO Repo Results --> My results are NOT good.... updated_run_latino.py gets very similar (if not better) results than actual implemenaton depsite using the same model?
+2. Play around with the Proximal Operator Parameters and see what is best --> Updated this to follow utils.py
+3. Explore the main_LATINO.py file to see where else I'm going wrong 
+4. Is it a model dependence thing? What model am I using verus what they are using?
+5. What are some solutions??
+
+
 To Do
 1. Find Consistency Model w/o Prompt and repeat (not faithful redo of the LATINO)
     - See if prompt is empty what happens
