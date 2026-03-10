@@ -22,7 +22,7 @@ We benchmark diffusion-based inverse problem solvers on toy problems where the *
 | **DPS** | [Chung et al., 2023](https://arxiv.org/abs/2209.14687) | Reverse SDE with approximate likelihood guidance |
 | **MMPS** | [Rozet et al., 2024](https://arxiv.org/abs/2405.13712) | Like DPS, but accounts for Tweedie posterior covariance |
 
-> **Key finding:** On a 1D Gaussian, MMPS with ζ=1 uses the *exact* marginal likelihood (not an approximation), making it the only method expected to be perfectly calibrated. LATINO and DPS are provably miscalibrated regardless of hyperparameters.
+> **Key finding:** On a 1D Gaussian, MMPS with ζ=1 uses the *exact* marginal likelihood (not an approximation), making it the only method expected to be perfectly calibrated. LATINO and DPS are miscalibrated regardless of hyperparameters.
 
 ## 🚀 Quick Start
 
