@@ -6,9 +6,17 @@ This report surveys methods for solving inverse problems using diffusion and flo
 
 ---
 
+<<<<<<< HEAD
 ## Part I — Implemented Methods
 
 ### 1. LATINO — LAtent consisTency INverse sOlver
+=======
+## Part I: Methods Implemented in This Repository
+
+### 1. LATINO — LAtent consisTency INverse sOlver
+
+**Paper:** Spagnoletti, Prost, Almansa, Papadakis, Pereyra. *"LATINO-PRO"* ([arXiv:2503.12615](https://arxiv.org/abs/2503.12615), ICCV 2025).
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 Iterative noise–denoise–proximal loop. At each step $k$:
 
@@ -22,7 +30,17 @@ Iterative noise–denoise–proximal loop. At each step $k$:
 
 ### 2. DPS — Diffusion Posterior Sampling
 
+<<<<<<< HEAD
 Reverse-time SDE with likelihood gradient guidance:
+=======
+---
+
+### 2. DPS — Diffusion Posterior Sampling
+
+**Paper:** Chung, Kim, Mccann, Klasky, Ye. *"Diffusion Posterior Sampling for General Noisy Inverse Problems"* ([arXiv:2209.14687](https://arxiv.org/abs/2209.14687), ICLR 2023).
+
+**Core idea:** Run the reverse-time SDE from noise to data, adding a likelihood gradient at each step. Decomposes the posterior score via Bayes' rule:
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 $$\nabla_{x_t} \log p(x_t | y) = \nabla_{x_t} \log p(x_t) + \nabla_{x_t} \log p(y | x_t)$$
 
@@ -34,6 +52,7 @@ $$p(y | x_t) \approx \mathcal{N}(y \mid \hat{x}_0(x_t),\; \sigma_n^2)$$
 
 > Chung, Kim, McCann, Klasky, Ye. "Diffusion Posterior Sampling for General Noisy Inverse Problems." ICLR 2023. [arXiv:2209.14687](https://arxiv.org/abs/2209.14687)
 
+<<<<<<< HEAD
 ### 3. MMPS — Moment-Matching Posterior Sampling
 
 Improves DPS by incorporating the Tweedie posterior covariance:
@@ -77,6 +96,17 @@ with MMPS-style covariance in the likelihood. Pure ODE (deterministic given init
 ## Part II — Other Notable Methods (Not Yet Implemented)
 
 ### PSLD — Posterior Sampling with Latent Diffusion
+=======
+**Critical limitation:** [Kwon et al. (2025)](https://arxiv.org/abs/2501.18913) showed that DPS actually behaves as **implicit MAP estimation**, not posterior sampling — it produces high-quality but low-diversity outputs.
+
+**Status:** Implemented in `GaussianLATINO.ipynb`.
+
+---
+
+### 3. MMPS — Moment-Matching Posterior Sampling
+
+**Paper:** Rozet, Andry, Lanusse, Louppe. *"Learning Diffusion Priors from Observations by Expectation Maximization"* ([arXiv:2405.13712](https://arxiv.org/abs/2405.13712), 2024).
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 First framework extending DPS to latent diffusion models. Adds a "gluing objective" to keep latents in the encoder's range space, preventing decode-encode round-trip artifacts.
 
@@ -144,7 +174,11 @@ Shows that DPS's conditional score approximation is actually closer to **MAP est
 
 ---
 
+<<<<<<< HEAD
 ## Part III — State of the Art for Calibrated Posteriors
+=======
+### 4. LATINO + SDE
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 ### Which method should you use?
 
@@ -171,20 +205,31 @@ No method currently achieves all four desiderata simultaneously: (a) works in la
 
 ---
 
+<<<<<<< HEAD
 ## Part IV — Open Failure Modes
 
 ### 1. The decoder Jacobian problem (latent-space specific)
+=======
+### 5. LFlow — Latent Refinement via Flow Matching
+
+**Paper:** Askari, Luo, Sun, Roosta. *"Latent Refinement via Flow Matching for Training-free Linear Inverse Problem Solving"* ([arXiv:2511.06138](https://arxiv.org/abs/2511.06138), NeurIPS 2025).
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 All latent-space methods must deal with $y = A \cdot D(z) + n$, where $D$ is the nonlinear decoder. Computing $\nabla_z \log p(y|z_t)$ requires either:
 - **Backpropagation through $D$**: expensive, noisy Jacobian, $D$ sees OOD latents during sampling [SILO, PSLD]
 - **Avoiding $D$ entirely**: LATINO-PRO (proximal splitting), SILO (learned latent operator) — sidesteps the issue but sacrifices posterior fidelity
 
+<<<<<<< HEAD
 The decoder Jacobian is non-uniform across the latent space. Regions of high distortion see stronger memorization and different score behavior, meaning uniform guidance strategies are suboptimal [Rao et al., 2025: arXiv:2511.20592].
 
 **No clean solution exists.** This is arguably the central open problem.
+=======
+**Velocity field:**
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 ### 2. Tweedie approximation breakdown (multimodal posteriors)
 
+<<<<<<< HEAD
 The Tweedie denoiser $\hat{x}_0 = \mathbb{E}[x_0|x_t]$ is a posterior mean — it averages over modes. For multimodal posteriors:
 - At large $\sigma_t$: $\hat{x}_0$ is a blurry average between modes, pointing guidance toward a non-existent "average mode"
 - The covariance $V[x_0|x_t]$ captures inter-mode spread, but the Gaussian likelihood approximation $\mathcal{N}(y|A\hat{x}_0, \sigma_n^2 + AV_tA^T)$ remains fundamentally **unimodal**
@@ -193,6 +238,9 @@ The Tweedie denoiser $\hat{x}_0 = \mathbb{E}[x_0|x_t]$ is a posterior mean — i
 DAPS mitigates this via decoupled annealing (allows large jumps). LD-SMC uses multiple particles. Neither fully solves the problem in high dimensions.
 
 ### 3. Score estimation error amplification
+=======
+**Posterior guidance** (from continuity equation):
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 With *learned* scores (not the exact analytic scores used in our notebooks):
 - Score estimation error is amplified by the guidance step and accumulated over hundreds of reverse steps
@@ -206,15 +254,20 @@ Methods alternating between latent and pixel space (ReSample, P2L, split approac
 - Worst for fine details and out-of-distribution content — precisely the regime where inverse problems push estimates
 - P2L [Chung et al., 2024] identifies latent drift outside the encoder's range as a major artifact source
 
+<<<<<<< HEAD
 ### 5. Nonlinear forward models
 
 Even in pixel space, DPS/MMPS break down for nonlinear forward models (phase retrieval, non-Cartesian MRI):
 - The Gaussian likelihood approximation does not hold
 - The guidance gradient landscape becomes non-convex with spurious local minima
 - DAPS handles this better via global exploration, but without guarantees
+=======
+**Posterior covariance** for a Gaussian prior with OT interpolant:
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
 
 ### 6. The calibration gap
 
+<<<<<<< HEAD
 The field overwhelmingly reports reconstruction quality (PSNR, SSIM, LPIPS, FID). **Almost no papers report posterior calibration metrics** (coverage probability, z-score distributions, QQ plots). Among those that do:
 - Most methods are under-dispersed (overconfident)
 - Good PSNR does not imply calibrated posteriors
@@ -311,3 +364,143 @@ The biggest gap is a method that simultaneously:
 26. Qiu, Yang, Liu, Wang, Shen. "Benchmarking Uncertainty Quantification of Plug-and-Play Diffusion Priors for Inverse Problems Solving." 2026. [arXiv:2602.04189](https://arxiv.org/abs/2602.04189)
 
 27. Chung, Kim, Ye. "Diffusion Models for Inverse Problems." Survey, 2025. [arXiv:2508.01975](https://arxiv.org/abs/2508.01975)
+=======
+**Gaussian calibration result:** Theoretically exact — the guided ODE recovers the exact posterior mean and variance (verified analytically with a high-precision ODE solver). Practically, Euler discretization introduces slow convergence (z-std=0.986 at N=200 vs MMPS's 1.002) because the ODE has stiff-like behavior from the $t/(1-t)$ factor and lacks the SDE's self-correcting noise.
+
+**Status:** Implemented in `GaussianLATINO.ipynb`.
+
+---
+
+### Gaussian Calibration Summary
+
+| Method | μ (target: 1.200) | σ (target: 0.447) | z-std (target: 1.000) |
+|--------|-------------------|--------------------|-----------------------|
+| Vanilla LATINO | 1.337 | 0.327 | 0.765 |
+| DPS | 1.452 | 0.356 | 0.916 |
+| **MMPS** | **1.179** | **0.446** | **1.002** |
+| LATINO + SDE | 1.209 | 0.436 | 0.979 |
+| **LFlow** | **1.199** | **0.442** | **0.986** |
+
+---
+
+## Part II: State of the Art for Calibrated Posteriors
+
+### The fundamental hardness result
+
+[Gupta et al. (ICML 2024)](https://arxiv.org/abs/2402.12727) proved that **the worst-case complexity of diffusion posterior sampling is super-polynomial**, even when unconditional sampling is fast. This means no algorithm can be simultaneously general, fast, and exact. All practical methods must trade off between these.
+
+### Best current approaches for calibrated posteriors
+
+#### PnP-DM — Plug-and-Play Diffusion Models (NeurIPS 2024)
+
+**Paper:** Wu, Sun, Chen, Zhang, Yue, Bouman. ([arXiv:2405.18782](https://arxiv.org/abs/2405.18782)) | [Project](https://imaging.cms.caltech.edu/pnpdm/)
+
+The strongest current method for calibrated posteriors. Uses a **split Gibbs sampler** (MCMC) that alternates:
+1. **Likelihood step:** Sample $z \sim p(z | x, y)$ — a Gaussian proximal step
+2. **Prior step:** Sample $x \sim p(x | z)$ — a Bayesian denoising problem (exactly what diffusion models do)
+
+**Key advantage:** No Tweedie approximation. No guidance heuristics. The diffusion model is used as a denoising oracle, not for likelihood estimation. Non-asymptotic stationarity guarantees. Captures 97.5% of ground truth pixels in 3-sigma credible intervals. Demonstrated on black hole imaging with multimodal posteriors.
+
+**Limitation:** MCMC — requires many iterations. Operates in **pixel space only**.
+
+#### DPnP — Diffusion Plug-and-Play (NeurIPS 2024)
+
+**Paper:** Xu & Chi. ([arXiv:2403.17042](https://arxiv.org/abs/2403.17042))
+
+First provably robust posterior sampling method for **nonlinear** inverse problems. Both asymptotic and non-asymptotic guarantees, with graceful degradation under score estimation error.
+
+#### G-DPS — Gibbs Posterior Sampler (Feb 2025)
+
+**Paper:** Giovannelli. ([arXiv:2602.11059](https://arxiv.org/abs/2602.11059))
+
+Augments the problem with the full diffusion chain as auxiliary variables. All conditionals are Gaussian — "remarkably simple." Convergence guaranteed, but linear forward models only.
+
+#### DAPS — Decoupled Annealing Posterior Sampling (CVPR 2025 Oral)
+
+**Paper:** Zhang, Chu, Berner, Meng, Anandkumar, Song. ([arXiv:2407.01521](https://arxiv.org/abs/2407.01521))
+
+Decouples consecutive diffusion steps, allowing large jumps in sample space. Time-marginals provably anneal to the true posterior. Works in both pixel and **latent space** (demonstrated with Stable Diffusion). Very expensive.
+
+---
+
+## Part III: Failure Modes None of the Methods Fully Address
+
+### 1. The Tweedie approximation is fundamentally unimodal
+
+DPS, MMPS, LFlow all approximate $p(x_0|x_t)$ as Gaussian. This is exact for Gaussians but breaks for multimodal posteriors. At large noise, $\mathbb{E}[x_0|x_t]$ is a blurry average over modes — the Gaussian approximation is wrong. MMPS adds the covariance but remains unimodal.
+
+**Affected:** DPS, MMPS, TMPD, LFlow, and all first/second-order Tweedie methods.
+**Mitigation:** MCMC correction (PnP-DM), multi-particle methods with repulsion.
+
+### 2. Latent space introduces three compounding errors
+
+This is the **key unsolved problem** for latent models:
+
+- **Decoder Jacobian distortion:** The Jacobian $J_D(z)$ has decaying singular values, creating anisotropic latent dimensions where some directions matter far more than others for data-space fidelity. ([arXiv:2511.20592](https://arxiv.org/pdf/2511.20592))
+- **Representation error:** The encoder is many-to-one. Many latents decode to images consistent with measurements. [PSLD](https://arxiv.org/abs/2307.00619) showed vanilla DPS extensions to latent space simply don't work without a "gluing" penalty.
+- **Nonlinearity of decode(encode(·)):** Even linear forward models $y = Ax + n$ become nonlinear in latent space: $y = A \cdot D(z) + n$, destroying closed-form proximal steps.
+
+**Proposed solutions:** [ReSample](https://arxiv.org/abs/2307.08123) (hard data consistency via optimization), [SILO](https://openaccess.thecvf.com/content/ICCV2025/papers/Raphaeli_SILO_Solving_Inverse_Problems_with_Latent_Operators_ICCV_2025_paper.pdf) (learned latent operators), Jacobian-aware weighting. None fully resolve the issue.
+
+### 3. ODE methods systematically under-disperse
+
+[Analysis of deterministic ODE samplers](https://arxiv.org/abs/2508.16154) shows they concentrate samples due to score errors propagating coherently (no stochastic correction). SDE methods self-correct via noise injection.
+
+**Affected:** LFlow, LATINO (PF-ODE), consistency models.
+**Mitigation:** Use SDE samplers or hybrid approaches.
+
+### 4. Calibration ≠ reconstruction quality
+
+A [comprehensive UQ benchmark (Feb 2026)](https://arxiv.org/abs/2602.04189) found dramatic differences:
+
+| Method | Reconstruction quality | Calibration |
+|--------|----------------------|-------------|
+| DPS, DiffPIR, DDNM | Good PSNR/SSIM | Substantially overconfident |
+| REDDiff | Good PSNR/SSIM | Near-zero variance (point estimate) |
+| PnP-DM, MCG-Diff | Good PSNR/SSIM | Reasonably calibrated |
+
+Most papers report PSNR/SSIM/LPIPS but never validate calibration.
+
+### 5. No posterior guarantees with learned scores
+
+- Unconditional diffusion sampling requires only L2 score accuracy.
+- Posterior sampling requires much stronger conditions (MGF bounds, log-concavity).
+- [Annealed Langevin (Wu et al., 2025)](https://arxiv.org/abs/2510.26324) achieves polynomial convergence with L4 score error bounds under local log-concavity — the best known result, but still restrictive.
+- Performance guarantees can **diverge with increasing dimension** ([arXiv:2505.18276](https://arxiv.org/pdf/2505.18276)).
+
+### 6. Nonlinear forward models break guidance
+
+All theory assumes linear $A$. Nonlinear models introduce expensive Jacobians, severe nonconvexity, and local minima. All gradient-guidance methods degrade. Proximal methods lose closed forms.
+
+### 7. Manifold departure
+
+Score functions are trained only on the noisy data manifold. Measurement-consistency projections can throw samples off-manifold where scores are unreliable. [MCG (Chung et al., NeurIPS 2022)](https://arxiv.org/abs/2206.00941) mitigates this with tangent-plane corrections.
+
+---
+
+## Part IV: Error Decomposition
+
+Total error in diffusion posterior sampling decomposes into:
+
+1. **Initialization/truncation error** — starting from finite rather than infinite noise
+2. **Score approximation error** — learned score ≠ true score (**often dominant in practice**)
+3. **Discretization error** — finite steps in ODE/SDE solver (mitigable with more steps)
+4. **Likelihood approximation error** — Tweedie, guidance heuristics (**structural to the method class**)
+5. **Latent-space error** — decoder nonlinearity, Jacobian distortion, representation gap (**fundamental to non-invertible architectures**)
+
+For inverse problems, items 4 and 5 are the additional error sources that don't exist in unconditional sampling. This is the core reason why unconditional diffusion models work well but posterior sampling remains challenging.
+
+---
+
+## Part V: Summary — What to Use When
+
+| Goal | Best approach | Trade-off |
+|------|--------------|-----------|
+| Fast reconstructions | LFlow / LATINO | Not calibrated; ~8 NFEs |
+| Calibrated posteriors (pixel space) | **PnP-DM** (Split Gibbs) | ~100-1000× slower |
+| Calibrated posteriors (latent space) | **Open problem** | Decoder Jacobian unsolved |
+| Nonlinear forward models | DPnP / PnP-DM | Even more expensive |
+| Multimodal posteriors | PnP-DM / DAPS | Must avoid Tweedie-based guidance |
+
+**The uncomfortable truth:** No existing method provides calibrated posteriors with latent models efficiently. PnP-DM works but only in pixel space. Latent methods (LFlow, LATINO, PSLD) trade calibration for speed. The decoder Jacobian problem — bridging pixel-space measurements to latent-space priors without expensive or approximate Jacobian computation — remains the key open challenge.
+>>>>>>> c4a9935 (Expand report with SOTA calibration methods and failure mode analysis)
