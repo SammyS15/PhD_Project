@@ -45,19 +45,6 @@ def ve_score(x, t, sigma_min, sigma_max):
     post_mean = jax.nn.softmax(log_w) @ jnp.array(coords.T)                
     return -(x - post_mean) / s2
 
-def sample_true_posterior(y_obs, n_samples, rng_key):
-    """Draw exact samples from p(x | y_obs) for the Two Moons prior."""
-    mus = jnp.array(coords.T)                              # (4000, 2)
-    sigma_post2 = sigma ** 2 * sigma_y ** 2 / (sigma ** 2 + sigma_y ** 2)
-    mu_post = sigma_post2 * (mus / sigma ** 2 + y_obs / sigma_y ** 2)  # (4000, 2)
-    s2_marg = sigma ** 2 + sigma_y ** 2
-    log_w = -0.5 * jnp.sum((y_obs - mus) ** 2, axis=-1) / s2_marg
-    w = jax.nn.softmax(log_w)
-    k1, k2 = jr.split(rng_key)
-    idx = jr.choice(k1, mus.shape[0], shape=(n_samples,), p=w)
-    return mu_post[idx] + jnp.sqrt(sigma_post2) * jr.normal(k2, (n_samples, 2))
-
-
 def latino(x_init, y_obs, rng_key, N=N_steps):
     """
     LATINO for a single 2D point.
@@ -109,19 +96,15 @@ x_latino = latino_batch(Y_obs, batch_keys)
 
 # True posterior samples (one per observation)
 key, k4 = jr.split(key)
-post_keys = jr.split(k4, N_batch)
-x_post = jnp.stack([
-    sample_true_posterior(Y_obs[i], 1, post_keys[i])[0]
-    for i in range(N_batch)
-])                                                       
+post_keys = jr.split(k4, N_batch)                                                     
 
 # Plot
-fig, axes = plt.subplots(1, 4, figsize=(15, 5))
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 fig.suptitle(f"LATINO Two Moons Denoising  ($\\sigma_y$={sigma_y}, N={N_steps})", fontsize=14)
 
 xlim, ylim = (-1.5, 2.5), (-1.0, 2.0)
-titles = ["True prior $p(x)$", f"Nosiy Samples ($\\sigma_y$={sigma_y})", "True posterior $p(x|y)$", "LATINO output"]
-data   = [x_true, Y_obs, x_post, x_latino]
+titles = ["True prior $p(x)$", f"Nosiy Samples ($\\sigma_y$={sigma_y})", "LATINO output"]
+data   = [x_true, Y_obs, x_latino]
 
 for ax, d, title in zip(axes, data, titles):
     d_np = np.array(d)
@@ -136,41 +119,10 @@ plt.tight_layout()
 plt.savefig("./Plots/comparison.png", dpi=150, bbox_inches="tight")
 plt.close()
 
-# Single observation posterior
-key, k_x, k_noise, k5, k6 = jr.split(key, 5)
-
-# Sample latent and observation
-x_true_star = sample_two_moon_dist(1, k_x)[0]             # true latent
-y_star      = x_true_star + sigma_y * jr.normal(k_noise, (2,))  # observation
-
-# True posterior samples for this observation
-x_post_single = sample_true_posterior(y_star, N_runs, k5)    # (N_runs, 2)
-
-# LATINO samples for this observation
-single_keys = jr.split(k6, N_runs)
-x_latino_single = jax.vmap(lambda key: latino(y_star, y_star, key))(single_keys)
-
-# Plot overlay
-fig, ax = plt.subplots(figsize=(7, 6))
-ax.scatter(*np.array(x_post_single).T,   s=5, alpha=0.4, c="steelblue",  label="True posterior $p(x|y^*)$")
-ax.scatter(*np.array(x_latino_single).T, s=5, alpha=0.4, c="darkorange", label="LATINO")
-ax.scatter(*np.array(y_star), s=30, c="red", marker="*", zorder=5,      label="$y^*$")
-ax.set_xlim(*xlim)
-ax.set_ylim(*ylim)
-ax.set_xlabel("$x_1$")
-ax.set_ylabel("$x_2$")
-ax.set_title(f"Posterior ($\\sigma_y$={sigma_y})")
-ax.legend(markerscale=3)
-plt.tight_layout()
-plt.savefig("./Plots/single_obs_posterior.png", dpi=150, bbox_inches="tight")
-plt.close()
-
-# Above is a single observation posterior, now I want to run TARP so I want many posteriors
-
+# Run TARP to evaluate the quality of the 'posterior'
 def plot_tarp_curve(ecp, alpha, ecp_bootstrap, alpha_bootstrap, sigma_y):
     k_sigma = [1, 2, 3]
-
-
+    
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
     ax.plot([0, 1], [0, 1], ls='--', color='k', label = "Ideal case")
     ax.plot(alpha, ecp_bootstrap.mean(axis=0), label='TARP')
@@ -183,10 +135,6 @@ def plot_tarp_curve(ecp, alpha, ecp_bootstrap, alpha_bootstrap, sigma_y):
     plt.savefig(out_path, bbox_inches="tight", dpi=300)
     plt.close()
     print(f"  Saved TARP plot to {out_path}")
-
-'''
-Repeat the Posterior for A cases and save them since currently it's one case only
-'''
 
 N_tarp_obs  = 200   # number of test observations
 N_tarp_post = 100  # LATINO posterior samples per observation
