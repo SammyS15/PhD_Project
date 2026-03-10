@@ -1,0 +1,18 @@
+{
+    "sigma_min": 0.01,
+    "sigma_max": 10,
+    "dimensions": 2,
+    "units": 50,
+    "layers": 4,
+    "time_embedding_dimensions": 50,
+    "embedding_scale": 32,
+    "activation": "swish",
+    "time_branch_layers": 1,
+    "bottleneck": 15,
+    "attention": true,
+    "nn_is_energy": false,
+    "conditioning": ["none"],
+    "sde": "ve",
+    "T": 1.0,
+    "model_architecture": "MLP"
+}

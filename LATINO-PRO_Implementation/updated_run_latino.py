@@ -10,6 +10,8 @@ Updated version of run_LATINO & run_LATINO_16_scale_factor with corrections base
     Starting from the noisy version of the initial estimate would not be compatible with how noise_pred_cond_y computes the modified noise prediction, which is based on the current latents and the scheduler's timesteps. 
     By starting from random noise latents, we ensure that the algorithm follows the intended flow of using the scheduler's noise addition and the modified noise prediction correctly.
 - Defined normalization for sigma_y incorrectly, it's fixed now
+
+SXDL --> Stability AI models
 """
 
 import os
