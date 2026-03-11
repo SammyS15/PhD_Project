@@ -20,3 +20,5 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 5	2026-03-11	H11: fewer steps	Latent MMPS (N=100)	FoldedDecoder2D	1.0	0.474	0.056	-	SAME	calibrated at N=100
 6	2026-03-11	H3: LATINO+SDE	Latent LATINO+SDE	NonlinearDecoder2D	0.5	0.575	0.146	-	WORSE	SDE denoiser makes it worse
 6	2026-03-11	H3: LATINO+SDE	Latent LATINO+SDE	FoldedDecoder2D	1.0	0.806	0.538	-	WORSE	much worse on bimodal
+7	2026-03-11	H4: Split Gibbs	Split Gibbs	NonlinearDecoder2D	0.5	0.539	0.088	-	SAME	passes NL but fails Folded
+7	2026-03-11	H4: Split Gibbs	Split Gibbs	FoldedDecoder2D	1.0	0.258	0.555	-	WORSE	trapped in one mode
