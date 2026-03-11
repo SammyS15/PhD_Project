@@ -85,7 +85,17 @@
 - DPS and LATINO degrade catastrophically at high α (opposite directions)
 - Key: MMPS's Jacobian-aware covariance naturally adapts to the decoder geometry
 
-## Oracle Comparison (H10, iter 9)
+## Oracle Comparison (H10, iter 9) — toy problems
 - Annealed ULA (1000 steps, exact log-posterior): NL=0.537, F=0.571
 - Latent MMPS (200 steps, Tweedie): NL=0.492, F=0.482 (n=200)
 - MMPS is competitive with or better than ULA oracle! The Tweedie approximation + SDE noise provides excellent calibration without needing exact posterior gradients over many steps. ULA struggles on FoldedDecoder2D bimodality.
+
+## MNISTVAE Grid Fix (iter 17) — CRITICAL DISCOVERY
+- The posterior_grid on [-4,4] with 200 points has spacing 0.04 vs posterior std ~0.015
+- **Less than 1 grid point per posterior std!** All HPD measurements were garbage.
+- Fixed: adaptive fine grid ±0.2 centered on encoder MAP, giving ~8 pts/std
+- Oracle preconditioned ULA achieves hpd_mean=0.501, KS=0.105 (borderline success)
+- All diffusion solvers still fail badly (hpd > 0.93) — confirmed with fixed grid
+- The posterior is EXTREMELY concentrated: std ~0.015 in a space where the prior is std=1.0
+- This means σ_n=0.2 makes a very well-constrained inverse problem for this decoder
+- Key challenge: solvers produce samples spanning z ∈ [-40, 40] while true posterior is ±0.03

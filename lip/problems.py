@@ -511,15 +511,26 @@ class MNISTVAE:
 
     # ── Grid-based calibration (only for d_latent=2) ──
 
-    def posterior_grid(self, y, *, grid_range=4.0, grid_size=200):
-        """Evaluate posterior on a 2D grid (only for latent_dim=2)."""
+    def posterior_grid(self, y, *, grid_range=None, grid_size=200):
+        """Evaluate posterior on a 2D grid (only for latent_dim=2).
+
+        Uses an adaptive fine grid centered on the encoder MAP estimate
+        because the MNISTVAE posterior is very concentrated (std ~0.015).
+        """
         if self.d_latent != 2:
             raise NotImplementedError(
                 f"posterior_grid requires d_latent=2, got {self.d_latent}. "
                 "Use MCMC-based calibration for higher dimensions."
             )
-        z1 = jnp.linspace(-grid_range, grid_range, grid_size)
-        z2 = jnp.linspace(-grid_range, grid_range, grid_size)
+        if grid_range is None:
+            # Adaptive: center on encoder MAP, ±0.2 covers ~13 stds
+            z_map = self.encoder(y)
+            fine_range = 0.2
+            z1 = jnp.linspace(z_map[0] - fine_range, z_map[0] + fine_range, grid_size)
+            z2 = jnp.linspace(z_map[1] - fine_range, z_map[1] + fine_range, grid_size)
+        else:
+            z1 = jnp.linspace(-grid_range, grid_range, grid_size)
+            z2 = jnp.linspace(-grid_range, grid_range, grid_size)
         Z1, Z2 = jnp.meshgrid(z1, z2)
         z_grid = jnp.stack([Z1.ravel(), Z2.ravel()], axis=-1)
         log_p = self.log_posterior(z_grid, y)
@@ -550,24 +561,32 @@ class MNISTVAE:
     def hpd_level(self, z, y, *, grid_range=4.0, grid_size=200):
         """HPD credibility level (d_latent=2 only).
 
-        Uses lax.map (sequential) instead of vmap to avoid OOM with the
-        high-dimensional decoder (784 outputs per grid point).
+        For MNISTVAE, uses an adaptive fine grid centered on the MAP
+        (encoder estimate) because the posterior is very concentrated
+        (std ~0.015) and a coarse grid on [-4,4] cannot resolve it.
         """
         if self.d_latent != 2:
             raise NotImplementedError("hpd_level requires d_latent=2")
 
         def _hpd_single(z_i, y_i):
-            _, _, _, _, p_grid, dz = self.posterior_grid(
-                y_i, grid_range=grid_range, grid_size=grid_size
-            )
-            log_p_z = self.log_posterior(z_i, y_i)
-            z1 = jnp.linspace(-grid_range, grid_range, grid_size)
-            z2 = jnp.linspace(-grid_range, grid_range, grid_size)
+            # Find MAP via encoder
+            z_map = self.encoder(y_i)
+            # Use fine grid centered on MAP: ±0.2 covers ~13 stds
+            fine_range = 0.2
+            fine_size = grid_size
+            z1 = jnp.linspace(z_map[0] - fine_range, z_map[0] + fine_range, fine_size)
+            z2 = jnp.linspace(z_map[1] - fine_range, z_map[1] + fine_range, fine_size)
             Z1, Z2 = jnp.meshgrid(z1, z2)
             z_grid = jnp.stack([Z1.ravel(), Z2.ravel()], axis=-1)
             log_p_grid = self.log_posterior(z_grid, y_i)
-            log_norm = jax.scipy.special.logsumexp(log_p_grid) + jnp.log(dz)
-            p_at_z = jnp.exp(log_p_z - log_norm)
+            log_p_max = jnp.max(log_p_grid)
+            p_grid = jnp.exp(log_p_grid - log_p_max).reshape(fine_size, fine_size)
+            dz = float((z1[1] - z1[0]) * (z2[1] - z2[0]))
+            p_grid = p_grid / (jnp.sum(p_grid) * dz)
+
+            # HPD level: fraction of posterior mass at density >= p(z_i|y_i)
+            log_p_z = self.log_posterior(z_i, y_i)
+            p_at_z = jnp.exp(log_p_z - log_p_max) / (jnp.sum(jnp.exp(log_p_grid - log_p_max)) * dz)
             alpha = jnp.sum(jnp.where(p_grid >= p_at_z, p_grid, 0.0)) * dz
             return alpha
 
