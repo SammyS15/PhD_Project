@@ -54,9 +54,15 @@
 - Confirms: SDE noise injection (as in Latent MMPS) is essential for bimodal posteriors
 - SDE > ODE for posterior sampling in latent space
 
+## Noise Level Sensitivity (H15, iter 14)
+- MMPS calibrated at ALL sigma_n ∈ [0.1, 1.0] on NonlinearDecoder2D
+- DPS catastrophically fails at low noise: hpd=0.065 at sigma_n=0.1 (guidance too strong)
+- The Tweedie covariance V_t is crucial at low noise: without it (DPS), guidance overwhelms the prior
+- FoldedDecoder2D borderline at sigma_n=0.1 (KS=0.108) — tight bimodal posterior is hardest case
+
 ## New Hypotheses (agent-generated)
-- H13b: Local nonlinearity measure (Hessian norm near z0_hat) instead of global
-- H15: Latent LFlow + SDE noise injection hybrid
+- H13b: Local nonlinearity measure for zeta auto-tuning
+- H16: Higher N for FoldedDecoder2D at sigma_n=0.1 to fix the remaining edge case
 
 ## Dead Ends
 - H2 (second-order Hessian correction): buggy with batched inputs, and unnecessary since adaptive zeta achieves same result more simply
