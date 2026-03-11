@@ -1,56 +1,32 @@
-"""Experiment: H10 — Annealed ULA on exact log-posterior (oracle).
+"""Experiment: H6 — FoldedDecoder2D stress test across alpha values.
 
-Simpler than MALA (no MH step), faster. Use as oracle reference.
+The FoldedDecoder2D alpha controls how much norm info leaks through the
+third channel. Test Latent MMPS across alpha values.
+Also test with adaptive zeta from H12.
 """
 
 import jax
 import jax.numpy as jnp
 from functools import partial
-from lip import NonlinearDecoder2D, FoldedDecoder2D
+from lip import FoldedDecoder2D
 from lip.metrics import latent_calibration_test
-
-
-def annealed_ula(problem, y, key, *, n_steps=1000, eta=0.005,
-                  n_anneal=300, T_max=3.0):
-    """Annealed ULA on exact log-posterior (no MH correction)."""
-    key, subkey = jax.random.split(key)
-    z = jax.random.normal(subkey, (*y.shape[:-1], problem.d_latent))
-
-    grad_fn = jax.grad(lambda z, y: problem.log_posterior(z, y))
-
-    for i in range(n_steps):
-        if i < n_anneal:
-            T = T_max * (1 - i / n_anneal) + 1.0 * (i / n_anneal)
-        else:
-            T = 1.0
-
-        key, subkey = jax.random.split(key)
-
-        if z.ndim == 1:
-            g = grad_fn(z, y)
-        else:
-            g = jax.vmap(grad_fn)(z, y)
-
-        z = z + eta * g / T + jnp.sqrt(2 * eta / T) * jax.random.normal(subkey, z.shape)
-
-    return z
+from lip.solvers.latent_mmps import latent_mmps
+from lip.solvers.latent_dps import latent_dps
+from lip.solvers.latent_latino import latent_latino
 
 
 if __name__ == "__main__":
-    p1 = NonlinearDecoder2D(alpha=0.5)
-    p2 = FoldedDecoder2D(alpha=1.0)
+    print("H6: FoldedDecoder2D stress test — alpha sweep")
+    print(f"{'alpha':>6} | {'MMPS hpd':>8} {'MMPS ks':>7} | {'DPS hpd':>8} {'DPS ks':>7} | {'LAT hpd':>8} {'LAT ks':>7}")
+    print("-" * 75)
 
-    print("H10: Annealed ULA oracle (n_steps=1000)")
-    for name, p in [("NonlinearDecoder2D", p1), ("FoldedDecoder2D", p2)]:
-        r = latent_calibration_test(p, annealed_ula, jax.random.PRNGKey(0), n=100)
-        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
-        print(f"  {name}: hpd={r['hpd_mean']:.3f} KS={r['hpd_ks']:.3f} {ok}")
+    solver_mmps = partial(latent_mmps, zeta=1.1)
 
-    # Compare
-    from lip.solvers.latent_mmps import latent_mmps
-    solver = partial(latent_mmps, zeta=1.1)
-    print("\nLatent MMPS (zeta=1.1):")
-    for name, p in [("NonlinearDecoder2D", p1), ("FoldedDecoder2D", p2)]:
-        r = latent_calibration_test(p, solver, jax.random.PRNGKey(0), n=100)
-        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
-        print(f"  {name}: hpd={r['hpd_mean']:.3f} KS={r['hpd_ks']:.3f} {ok}")
+    for alpha in [0.1, 0.3, 0.5, 1.0, 2.0, 3.0]:
+        problem = FoldedDecoder2D(alpha=alpha)
+        r_mmps = latent_calibration_test(problem, solver_mmps, jax.random.PRNGKey(0), n=200)
+        r_dps = latent_calibration_test(problem, latent_dps, jax.random.PRNGKey(0), n=200)
+        r_lat = latent_calibration_test(problem, latent_latino, jax.random.PRNGKey(0), n=200)
+
+        m_ok = "✓" if 0.45 <= r_mmps['hpd_mean'] <= 0.55 and r_mmps['hpd_ks'] < 0.10 else " "
+        print(f"{alpha:6.1f} | {r_mmps['hpd_mean']:8.3f} {r_mmps['hpd_ks']:7.3f} {m_ok}| {r_dps['hpd_mean']:8.3f} {r_dps['hpd_ks']:7.3f} | {r_lat['hpd_mean']:8.3f} {r_lat['hpd_ks']:7.3f}")
