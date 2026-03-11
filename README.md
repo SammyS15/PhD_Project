@@ -57,9 +57,57 @@ The central open problem: **no existing method provides calibrated posteriors wi
 git clone https://github.com/EiffL/LatentInverseProblems.git
 cd LatentInverseProblems
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt   # jax, diffrax, numpyro
-jupyter lab notebooks/
+pip install -e .                  # installs the lip library
+python scripts/run_gaussian.py    # run benchmark, save plots + JSON
 ```
+
+This prints a calibration summary table and saves per-solver diagnostic plots and a `results.json` to `results/<git-hash>/`.
+
+### One-liner benchmark from Python
+
+```python
+import lip
+results = lip.benchmark(lip.Gaussian1D())
+```
+
+### Prototype a new solver
+
+```python
+from lip import Gaussian1D
+from lip.metrics import calibration_test
+import jax
+
+problem = Gaussian1D()
+
+def my_solver(problem, y, key, *, N=100):
+    x = y  # start from observation
+    for i in range(N):
+        ...  # your algorithm here
+    return x
+
+result = calibration_test(problem, my_solver, jax.random.PRNGKey(0))
+print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
+```
+
+## Library Structure
+
+```
+lip/
+├── __init__.py           # re-exports: Gaussian1D, benchmark, print_table
+├── problems.py           # Gaussian1D dataclass (problem defines its own diagnostic plot)
+├── metrics.py            # calibration_test, posterior_test, benchmark, print_table
+└── solvers/
+    ├── __init__.py       # ALL dict + re-exports
+    ├── latino.py         # LATINO (PF-ODE + proximal step)
+    ├── dps.py            # DPS (reverse SDE + Tweedie mean guidance)
+    ├── mmps.py           # MMPS (DPS + Tweedie covariance correction)
+    ├── latino_sde.py     # LATINO with stochastic denoiser
+    └── lflow.py          # LFlow (flow matching + posterior velocity)
+scripts/
+└── run_gaussian.py       # benchmark demo → results/<git-hash>/
+```
+
+Every solver is a single function with signature `(problem, y, key, **kwargs) -> x`. Each file is self-contained — read it top to bottom and you understand the complete algorithm.
 
 ## Notebooks
 
@@ -81,5 +129,6 @@ jupyter lab notebooks/
 ## Stack
 
 - **[JAX](https://github.com/google/jax)** — Autodiff & JIT; scores computed via `jax.grad` on exact log-densities
-- **[diffrax](https://github.com/patrick-kidger/diffrax)** — ODE/SDE integration (Tsit5, Euler-Maruyama)
-- **[NumPyro](https://github.com/pyro-ppl/numpyro)** — Mixture model construction for the two-moons prior
+- **[diffrax](https://github.com/patrick-kidger/diffrax)** — ODE/SDE integration (Tsit5, Euler-Maruyama) — used in notebooks
+- **[NumPyro](https://github.com/pyro-ppl/numpyro)** — Mixture model construction for the two-moons prior — used in notebooks
+- **[matplotlib](https://matplotlib.org/)** / **[scipy](https://scipy.org/)** — Diagnostic plots (histogram + QQ)

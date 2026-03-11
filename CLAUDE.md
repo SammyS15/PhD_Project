@@ -21,16 +21,45 @@ Identify a reliable and correct strategy for **diffusion posterior sampling in l
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt   # jax, diffrax, numpyro
+pip install -e .                   # installs lip package (jax)
+pip install -r requirements.txt    # additional deps: diffrax, numpyro (for notebooks)
 ```
 
 Python 3.14 venv is already present at `.venv/`.
 
+## Running Benchmarks
+
+```bash
+python scripts/run_gaussian.py     # prints table + saves plots/JSON to results/<git-hash>/
+```
+
+Quick prototype of a new solver:
+```python
+from lip import Gaussian1D
+from lip.metrics import calibration_test
+import jax
+
+problem = Gaussian1D()
+def my_solver(problem, y, key, *, N=100):
+    ...
+    return x
+result = calibration_test(problem, my_solver, jax.random.PRNGKey(0))
+print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
+```
+
 ## Repository Structure
 
-- `notebooks/` — Jupyter notebooks containing all experiments (no Python modules/packages yet)
-  - `GaussianLATINO.ipynb` — 1D Gaussian calibration: compares all 5 methods (LATINO, DPS, MMPS, LATINO+SDE, LFlow) against the analytic posterior via histogram and QQ-plot diagnostics
-  - `TwoMoons.ipynb` — 2D two-moons distribution: NumPyro mixture prior with exact score, VE-SDE diffusion sampler via diffrax, LATINO denoising with adaptive/constant/vanishing delta schedules
+- `lip/` — Minimal JAX library for posterior sampling benchmarks (installable via `pip install -e .`)
+  - `problems.py` — Problem dataclasses (`Gaussian1D`). Each problem defines `score`, `denoise`, `tweedie_cov`, `sample_joint`, `posterior_mean`, `posterior_std`, and a `plot` method for diagnostics.
+  - `solvers/` — One file per solver, each a self-contained function with signature `(problem, y, key, **kwargs) -> x`. `__init__.py` exports an `ALL` dict.
+    - `latino.py`, `dps.py`, `mmps.py`, `latino_sde.py`, `lflow.py`
+  - `metrics.py` — `calibration_test`, `posterior_test`, `benchmark` (runs all solvers, prints table, optionally saves plots + JSON to output dir)
+  - `__init__.py` — Re-exports: `Gaussian1D`, `benchmark`, `print_table`, `calibration_test`, `posterior_test`
+- `scripts/run_gaussian.py` — Demo: runs all solvers on `Gaussian1D`, saves results to `results/<git-hash>/`
+- `results/<git-hash>/` — Benchmark outputs: per-solver diagnostic plots (`<problem>_<solver>.png`) and `results.json`
+- `notebooks/` — Jupyter notebooks with original experiments
+  - `GaussianLATINO.ipynb` — 1D Gaussian calibration: compares all 5 methods against the analytic posterior
+  - `TwoMoons.ipynb` — 2D two-moons distribution: NumPyro mixture prior with exact score, VE-SDE diffusion sampler via diffrax
 - `report.md` — Comprehensive literature survey (31 papers): method taxonomy, failure modes, error decomposition, practical recommendations
 - `papers/` — Reference papers
 
