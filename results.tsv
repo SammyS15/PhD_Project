@@ -31,3 +31,5 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 10	2026-03-11	H6: Folded stress	Latent MMPS (z=1.1)	FoldedDecoder2D	3.0	0.516	0.085	-	BETTER	calibrated even at alpha=3.0!
 11	2026-03-11	H9: MLP decoder	Latent MMPS (z=1.0)	RandomMLPDecoder2D	-	0.463	0.094	-	BETTER	zeta=1.0 works for MLP
 11	2026-03-11	H9: MLP decoder	Latent DPS	RandomMLPDecoder2D	-	0.459	0.082	-	SAME	DPS competitive on linear-ish MLP
+12	2026-03-11	H13: auto-zeta	MMPS auto-zeta	NonlinearDecoder2D	0.0-1.5	~0.51	~0.06	-	BETTER	zeta=1+0.5*nonlin works for all NL alphas
+12	2026-03-11	H13: auto-zeta	MMPS auto-zeta	FoldedDecoder2D	1.0	0.350	0.223	-	WORSE	formula over-corrects for folding symmetry
