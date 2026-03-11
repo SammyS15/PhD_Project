@@ -47,9 +47,16 @@
 - The measure conflates global topology (folding) with local nonlinearity (Jacobian curvature)
 - For injective decoders, the formula is reliable. For non-injective, use fixed zeta=1.1
 
+## Latent LFlow (H14, iter 13)
+- ODE-based flow matching with Jacobian-aware guidance works on NonlinearDecoder2D (zeta=1.0: hpd=0.504)
+- Fails to simultaneously calibrate on FoldedDecoder2D — no single zeta works for both
+- Root cause: ODE has no stochastic noise for mode exploration; Euler discretization error is coherent
+- Confirms: SDE noise injection (as in Latent MMPS) is essential for bimodal posteriors
+- SDE > ODE for posterior sampling in latent space
+
 ## New Hypotheses (agent-generated)
 - H13b: Local nonlinearity measure (Hessian norm near z0_hat) instead of global
-- H14: Latent LFlow — port flow matching to latent space with Jacobian-aware covariance
+- H15: Latent LFlow + SDE noise injection hybrid
 
 ## Dead Ends
 - H2 (second-order Hessian correction): buggy with batched inputs, and unnecessary since adaptive zeta achieves same result more simply

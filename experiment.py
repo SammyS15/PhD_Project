@@ -1,10 +1,13 @@
-"""Experiment: H13 — Auto-tune zeta based on decoder Jacobian.
+"""Experiment: H14 — Latent LFlow: flow matching in latent space.
 
-Hypothesis: optimal zeta correlates with decoder nonlinearity.
-Measure nonlinearity via Hessian-to-Jacobian ratio at the Tweedie estimate,
-and use it to set zeta adaptively per step.
+Port LFlow to latent space with Jacobian-aware covariance, analogous
+to how Latent MMPS extends DPS. The guided velocity becomes:
 
-Simpler approach: measure E[||H_D||/||J_D||] at z~N(0,I) and set zeta = 1 + c*ratio.
+  v_guided = v(z_t) - (V_t/t) * J_D^T * Σ_y^{-1} * (y - D(z0_hat))
+
+where Σ_y = σ_n²I + V_t * J_D * J_D^T (same as Latent MMPS).
+
+This is purely ODE-based (deterministic given initial noise).
 """
 
 import jax
@@ -15,59 +18,64 @@ from lip.metrics import latent_calibration_test
 from lip.solvers.latent_mmps import latent_mmps
 
 
-def measure_nonlinearity(problem, key, n_samples=50):
-    """Estimate decoder nonlinearity as mean ||D(z) - J(0)·z|| / ||D(z)||."""
-    z = jax.random.normal(key, (n_samples, problem.d_latent))
-    Dz = problem.decoder(z)
-    # Linear approximation at origin
-    J0 = problem.decoder_jacobian(jnp.zeros(problem.d_latent))
-    Dz_lin = z @ J0.T  # (..., d_pixel)
-    nonlin = jnp.mean(jnp.linalg.norm(Dz - Dz_lin, axis=-1) / (jnp.linalg.norm(Dz, axis=-1) + 1e-8))
-    return float(nonlin)
+def latent_lflow(problem, y, key, *, N=200, t_max=0.999, t_min=0.001, zeta=1.0):
+    """Latent LFlow: flow matching with Jacobian-aware guidance."""
+    key, subkey = jax.random.split(key)
+    # Initialize from marginal at t ~ 1: z_t ≈ noise
+    var_t = (1 - t_max)**2 * problem.sigma_0**2 + t_max**2
+    z = jnp.sqrt(var_t) * jax.random.normal(subkey, (*y.shape[:-1], problem.d_latent))
+
+    dt = (t_max - t_min) / N
+
+    for i in range(N):
+        t = t_max - i * dt
+        sigma_t2 = (1 - t)**2 * problem.sigma_0**2 + t**2
+
+        # Tweedie denoised estimate in latent space
+        z0_hat = (1 - t) * problem.sigma_0**2 / sigma_t2 * z
+
+        # Velocity field in latent space
+        z1_hat = t / sigma_t2 * z
+        v = z1_hat - z0_hat
+
+        # Tweedie covariance for flow interpolant
+        V_t = problem.sigma_0**2 * t**2 / sigma_t2
+
+        # Jacobian-aware guidance (same structure as Latent MMPS)
+        residual = y - problem.decoder(z0_hat)
+        J = problem.decoder_jacobian(z0_hat)
+        JJT = jnp.einsum('...pi,...qi->...pq', J, J)
+        Sigma_y = problem.sigma_n**2 * jnp.eye(problem.d_pixel) + V_t * JJT
+        Sigma_y_inv_r = jnp.linalg.solve(Sigma_y, residual[..., None])[..., 0]
+        grad = jnp.einsum('...pi,...p->...i', J, Sigma_y_inv_r)
+
+        guidance = V_t / t * grad
+        v_guided = v - zeta * guidance
+
+        z = z - v_guided * dt
+
+    return z
 
 
 if __name__ == "__main__":
-    print("H13: Nonlinearity measurement and zeta auto-tuning")
+    p1 = NonlinearDecoder2D(alpha=0.5)
+    p2 = FoldedDecoder2D(alpha=1.0)
+
+    print("H14: Latent LFlow")
     print()
 
-    # Measure nonlinearity for each problem
-    problems = {
-        "NL(α=0.0)": NonlinearDecoder2D(alpha=0.0),
-        "NL(α=0.2)": NonlinearDecoder2D(alpha=0.2),
-        "NL(α=0.5)": NonlinearDecoder2D(alpha=0.5),
-        "NL(α=0.7)": NonlinearDecoder2D(alpha=0.7),
-        "NL(α=1.0)": NonlinearDecoder2D(alpha=1.0),
-        "NL(α=1.5)": NonlinearDecoder2D(alpha=1.5),
-        "Folded(α=1.0)": FoldedDecoder2D(alpha=1.0),
-    }
+    # Test various zeta
+    for zeta in [0.8, 1.0, 1.1, 1.2, 1.5]:
+        solver = partial(latent_lflow, zeta=zeta)
+        r1 = latent_calibration_test(p1, solver, jax.random.PRNGKey(0), n=200)
+        r2 = latent_calibration_test(p2, solver, jax.random.PRNGKey(0), n=200)
+        ok1 = "✓" if 0.45 <= r1['hpd_mean'] <= 0.55 and r1['hpd_ks'] < 0.10 else " "
+        ok2 = "✓" if 0.45 <= r2['hpd_mean'] <= 0.55 and r2['hpd_ks'] < 0.10 else " "
+        print(f"  zeta={zeta:.1f}: NL hpd={r1['hpd_mean']:.3f} KS={r1['hpd_ks']:.3f} {ok1} F hpd={r2['hpd_mean']:.3f} KS={r2['hpd_ks']:.3f} {ok2}")
 
-    print(f"{'Problem':>16} | {'nonlin':>7} | {'best_zeta':>9} | {'proposed':>8}")
-    print("-" * 55)
-
-    # Known optimal zetas from H12 sweep
-    known_best = {
-        "NL(α=0.0)": 1.1, "NL(α=0.2)": 1.1, "NL(α=0.5)": 1.2,
-        "NL(α=0.7)": 1.2, "NL(α=1.0)": 1.3, "NL(α=1.5)": 1.4,
-        "Folded(α=1.0)": 1.1,
-    }
-
-    nonlins = {}
-    for name, p in problems.items():
-        nl = measure_nonlinearity(p, jax.random.PRNGKey(0))
-        nonlins[name] = nl
-        best = known_best.get(name, "?")
-        # Proposed: zeta = 1.0 + 0.5 * nonlinearity
-        proposed = 1.0 + 0.5 * nl
-        print(f"{name:>16} | {nl:7.3f} | {best:>9} | {proposed:8.2f}")
-
-    # Test the auto-tuned zeta
-    print("\nVerification: auto-tuned zeta = 1.0 + 0.5 * nonlinearity")
-    print(f"{'Problem':>16} | {'auto_zeta':>9} | {'hpd':>6} | {'ks':>6}")
-    print("-" * 45)
-    for name, p in problems.items():
-        nl = nonlins[name]
-        auto_zeta = 1.0 + 0.5 * nl
-        solver = partial(latent_mmps, zeta=auto_zeta)
-        r = latent_calibration_test(p, solver, jax.random.PRNGKey(0), n=200)
-        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
-        print(f"{name:>16} | {auto_zeta:9.2f} | {r['hpd_mean']:6.3f} | {r['hpd_ks']:6.3f} {ok}")
+    # Compare with MMPS
+    print("\nLatent MMPS (zeta=1.1) reference:")
+    solver_mmps = partial(latent_mmps, zeta=1.1)
+    r1 = latent_calibration_test(p1, solver_mmps, jax.random.PRNGKey(0), n=200)
+    r2 = latent_calibration_test(p2, solver_mmps, jax.random.PRNGKey(0), n=200)
+    print(f"  NL hpd={r1['hpd_mean']:.3f} KS={r1['hpd_ks']:.3f}  F hpd={r2['hpd_mean']:.3f} KS={r2['hpd_ks']:.3f}")
