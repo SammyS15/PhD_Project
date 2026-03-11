@@ -6,6 +6,11 @@ approximation propagates Tweedie covariance through the decoder Jacobian:
   p(y|z_t) ≈ N(y | D(ẑ₀), σ_n²I + J_D · V[z|z_t] · J_Dᵀ)
 
 This reduces to standard DPS when V_t is dropped (= 0).
+
+Uses the push-through identity for efficiency:
+  J^T · (σ_n²I + V_t·J·J^T)^{-1} = (σ_n²I + V_t·J^T·J)^{-1} · J^T
+
+This reduces the solve from d_pixel×d_pixel to d_latent×d_latent.
 """
 
 import jax
@@ -38,16 +43,14 @@ def latent_mmps(problem, y, key, *, N=200, sigma_max=3.0, sigma_min=0.01, zeta=1
         z = z + g2 * s * dt
         z = z + sigma_t * jnp.sqrt(2 * log_R * dt) * jax.random.normal(subkey, z.shape)
 
-        # MMPS guidance through decoder Jacobian
-        # Σ_y = σ_n²I + V_t · J_D · J_D^T
+        # MMPS guidance via push-through identity (d_latent×d_latent solve):
+        # grad = (σ_n²I + V_t·J^T·J)^{-1} · J^T · (y - D(z0_hat))
         residual = y - problem.decoder(z0_hat)
-        J = problem.decoder_jacobian(z0_hat)
-        JJT = jnp.einsum('...pi,...qi->...pq', J, J)
-        Sigma_y = problem.sigma_n**2 * jnp.eye(problem.d_pixel) + V_t * JJT
-
-        # grad = J^T · Σ_y^{-1} · residual
-        Sigma_y_inv_r = jnp.linalg.solve(Sigma_y, residual[..., None])[..., 0]
-        grad = jnp.einsum('...pi,...p->...i', J, Sigma_y_inv_r)
+        J = problem.decoder_jacobian(z0_hat)          # (..., d_pixel, d_latent)
+        JTr = jnp.einsum('...pi,...p->...i', J, residual)  # (..., d_latent)
+        JTJ = jnp.einsum('...pi,...pj->...ij', J, J)       # (..., d_latent, d_latent)
+        M = problem.sigma_n**2 * jnp.eye(problem.d_latent) + V_t * JTJ
+        grad = jnp.linalg.solve(M, JTr[..., None])[..., 0]
 
         dz0_dz = problem.sigma_0**2 / (problem.sigma_0**2 + sigma_t**2)
         z = z + zeta * g2 * dt * grad * dz0_dz
