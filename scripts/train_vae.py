@@ -16,7 +16,6 @@ The trained weights are saved as a .npz file containing:
 
 import argparse
 import gzip
-import hashlib
 import struct
 import time
 from pathlib import Path
@@ -59,7 +58,9 @@ def load_mnist(data_dir="/tmp/mnist"):
     return _read_images(img_path)
 
 
-# ── VAE forward pass (pure JAX, no framework) ──────────────────────────────
+# ── VAE forward pass (reuse from lip.vae) ───────────────────────────────────
+
+from lip.vae import decode_single as decode, encode_single as encode
 
 
 def _init_linear(key, in_dim, out_dim):
@@ -83,27 +84,6 @@ def init_params(key, latent_dim=2):
         "dec_out": _init_linear(keys[6], 512, 784),
     }
     return params
-
-
-def _linear(x, wb):
-    w, b = wb
-    return x @ w + b
-
-
-def encode(params, x):
-    """Encoder: x (784,) -> mu, logvar (latent_dim,)."""
-    h = jax.nn.relu(_linear(x, params["enc_fc1"]))
-    h = jax.nn.relu(_linear(h, params["enc_fc2"]))
-    mu = _linear(h, params["enc_mu"])
-    logvar = _linear(h, params["enc_logvar"])
-    return mu, logvar
-
-
-def decode(params, z):
-    """Decoder: z (latent_dim,) -> x_recon (784,) in [0,1]."""
-    h = jax.nn.relu(_linear(z, params["dec_fc1"]))
-    h = jax.nn.relu(_linear(h, params["dec_fc2"]))
-    return jax.nn.sigmoid(_linear(h, params["dec_out"]))
 
 
 def reparameterize(mu, logvar, key):
