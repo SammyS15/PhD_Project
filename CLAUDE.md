@@ -18,7 +18,7 @@ Identify a reliable and correct strategy for **diffusion posterior sampling in l
 - **LATINO+SDE** — LATINO with stochastic reverse SDE denoiser. Nearly calibrated.
 - **LFlow** — Flow matching with posterior velocity (Askari et al., 2025): theoretically exact for Gaussians, limited by Euler discretization of stiff ODE.
 
-### Latent-space (NonlinearDecoder2D & FoldedDecoder2D)
+### Latent-space (NonlinearDecoder2D, FoldedDecoder2D & MNISTVAE)
 
 - **Latent LATINO** — Paper-accurate LATINO with encode→noise→denoise→decode→proximal round-trip (Algorithm 1 of arXiv:2503.12615). Iterates in pixel space, uses Gauss-Newton encoder. Returns E(x_final).
 - **Latent DPS** — DPS adapted for latent space. Guidance uses decoder Jacobian: `J_D(z0)^T (y - D(z0)) / σ_n²`. Operates entirely in latent space.
@@ -39,6 +39,7 @@ Python 3.14 venv is already present at `.venv/`.
 ```bash
 python scripts/run_gaussian.py     # 1D Gaussian: prints table + saves to results/<git-hash>/
 python scripts/run_nonlinear.py    # NonlinearDecoder2D + FoldedDecoder2D: latent solvers
+python scripts/run_mnist_vae.py    # MNISTVAE: pretrained VAE decoder on MNIST
 ```
 
 Quick prototype of a new solver:
@@ -62,6 +63,9 @@ print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
     - `Gaussian1D` — 1D Gaussian prior, identity forward model, analytic posterior.
     - `NonlinearDecoder2D` — 2D Gaussian latent prior, nonlinear decoder `D: ℝ²→ℝ³`, grid-based exact posterior. Parameter `alpha` controls nonlinearity (α=0 is linear).
     - `FoldedDecoder2D(NonlinearDecoder2D)` — Folding decoder where `D(z)=D(-z)` (complex squaring map), creating guaranteed bimodal posteriors. Tests representation error / encoder many-to-one problem.
+    - `MNISTVAE` — Pretrained MLP VAE decoder on MNIST. `D: ℝ^d → [0,1]^784` (28×28 images). Realistic neural network decoder with Jacobian via `jax.jacfwd`. Default `sigma_n=5.0` (tuned so posterior width is meaningful relative to prior). Supports `latent_dim=2` (grid-based calibration) and `latent_dim=20`.
+  - `vae.py` — Pure-JAX VAE forward pass (encoder/decoder) with weight loading from `.npz`.
+  - `data/` — Pretrained VAE weights (`vae_mnist_d2.npz`, `vae_mnist_d20.npz`).
   - `solvers/` — One file per solver, each a self-contained function with signature `(problem, y, key, **kwargs) -> x_or_z`.
     - Pixel-space: `latino.py`, `dps.py`, `mmps.py`, `latino_sde.py`, `lflow.py`
     - Latent-space: `latent_latino.py`, `latent_dps.py`
@@ -72,6 +76,8 @@ print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
 - `scripts/`
   - `run_gaussian.py` — 1D Gaussian benchmark (all 5 pixel-space solvers)
   - `run_nonlinear.py` — Latent benchmarks (NonlinearDecoder2D + FoldedDecoder2D)
+  - `run_mnist_vae.py` — MNISTVAE benchmark (all latent solvers)
+  - `train_vae.py` — Train MNIST VAE and save weights to `lip/data/`
 - `results/<git-hash>/` — Benchmark outputs: per-solver diagnostic plots (`<problem>_<solver>.png`) and `<problem>_results.json`
 - `notebooks/` — Jupyter notebooks with original experiments
   - `GaussianLATINO.ipynb` — 1D Gaussian calibration: compares all 5 methods against the analytic posterior
@@ -81,7 +87,8 @@ print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
 
 ## Key Dependencies and Patterns
 
-- **JAX** for autodiff and JIT compilation; scores are computed via `jax.grad(log_p)` on exact log-densities (no learned networks yet)
+- **JAX** for autodiff and JIT compilation; scores are computed via `jax.grad(log_p)` on exact log-densities; MNISTVAE uses `jax.jacfwd` for decoder Jacobians
+- **optax** for VAE training (Adam optimizer)
 - **diffrax** for ODE/SDE integration (PF-ODE denoising uses `Tsit5` with adaptive stepping via `PIDController`; SDE sampling uses `Euler` with `VirtualBrownianTree`)
 - **diffrax 0.7+**: diffusion coefficients must return `lineax.DiagonalLinearOperator`, not raw arrays
 - **numpyro.distributions** for mixture model construction (two-moons prior is a `MixtureSameFamily` of 2048 Gaussians along skeleton curves)
@@ -93,8 +100,9 @@ The latent-space problems form a hierarchy of increasing difficulty:
 
 1. **NonlinearDecoder2D** (α,β control nonlinearity) — Non-invertible decoder `D: ℝ²→ℝ³`, Jacobian distortion, but injective (unimodal posterior). Tests Tweedie approximation breakdown.
 2. **FoldedDecoder2D** (complex squaring map) — `D(z)=D(-z)`, guaranteed bimodal posterior. Tests mode-covering vs mode-seeking behavior. The Gauss-Newton encoder always picks one root, so LATINO is structurally trapped in one mode while DPS can explore both.
+3. **MNISTVAE** (pretrained neural network decoder) — MLP VAE trained on MNIST, `D: ℝ^d → [0,1]^784`. Realistic high-dimensional output, Jacobian computed via `jax.jacfwd`. Tests whether methods scale beyond toy decoders. DPS guidance scaling (zeta) needs significant reduction (~0.01-0.5 vs 1.0 on toy problems) due to large Jacobian norms.
 
-Both provide: `decoder`, `decoder_jacobian` (analytic), `encoder` (Gauss-Newton least-squares inverse, JIT-compatible via `jax.lax.scan`), `log_posterior`, `posterior_grid` (exact grid evaluation), `posterior_mean_cov_batch` (for calibration).
+All provide: `decoder`, `decoder_jacobian`, `encoder`, `log_posterior`, `posterior_grid` (exact grid evaluation, d_latent=2 only), `hpd_level` (for calibration).
 
 ## Algorithms
 
