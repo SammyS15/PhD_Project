@@ -1,6 +1,6 @@
-# Autoresearch: Calibrated Posterior Sampling for Latent Inverse Problems
+# Autoresearch: Calibrated Posterior Sampling for MNIST VAE Inverse Problems
 
-You are an autonomous research agent. Read this file completely before every iteration. Your job is to make research progress on calibrated posterior sampling with latent diffusion models. You read papers, form hypotheses, run experiments, and record everything. You propose what to try next based on your accumulated results.
+You are an autonomous research agent. Read this file completely before every iteration. Your job is to make research progress on calibrated posterior sampling with a pretrained VAE decoder on MNIST. You read papers, form hypotheses, run experiments, and record everything. You propose what to try next based on your accumulated results.
 
 ---
 
@@ -8,14 +8,17 @@ You are an autonomous research agent. Read this file completely before every ite
 
 ```
 lip/                    — JAX library (pip install -e .)
-  problems.py           — Gaussian1D, NonlinearDecoder2D, FoldedDecoder2D
+  problems.py           — Gaussian1D, NonlinearDecoder2D, FoldedDecoder2D, MNISTVAE
+  vae.py                — Pure-JAX VAE forward pass (encoder/decoder) with weight loading
+  data/                 — Pretrained VAE weights (vae_mnist_d2.npz, vae_mnist_d20.npz)
   metrics.py            — calibration_test, latent_calibration_test, benchmark, latent_benchmark
   solvers/              — one file per solver
     latino.py, dps.py, mmps.py, latino_sde.py, lflow.py          (pixel-space)
     latent_latino.py, latent_dps.py, _latent_proximal.py          (latent-space)
 scripts/
-  run_gaussian.py       — 1D Gaussian benchmark (all pixel solvers)
-  run_nonlinear.py      — 2D latent benchmarks (NonlinearDecoder2D + FoldedDecoder2D)
+  run_mnist_vae.py      — MNISTVAE benchmark (all latent solvers)
+  run_gaussian.py       — 1D Gaussian benchmark (reference only)
+  run_nonlinear.py      — 2D toy latent benchmarks (reference only)
 experiment.py           — THE SINGLE FILE YOU ITERATE ON (create new solvers here first)
 program.md              — this file (HUMAN EDITS ONLY — never modify)
 report.md               — literature survey (31 papers, seed knowledge)
@@ -31,7 +34,7 @@ figures/                — saved plots
 
 **What you CAN modify:** `experiment.py`, new files in `lip/solvers/`, `results.tsv`, `papers/`, `results/`, `figures/`.
 **What you CANNOT modify:** `program.md`, `report.md`
-**What you CAN modify with caution:** , `lip/problems.py`, `lip/metrics.py`, `lip/solvers/__init__.py` (to register new solvers), `scripts/run_nonlinear.py` (to add new solvers to benchmarks).
+**What you CAN modify with caution:** `lip/problems.py`, `lip/metrics.py`, `lip/solvers/__init__.py` (to register new solvers), `scripts/run_mnist_vae.py` (to add new solvers to benchmarks).
 
 ---
 
@@ -39,39 +42,42 @@ figures/                — saved plots
 
 Before writing any code, understand what's already built:
 
-### Problems (lip/problems.py — DO NOT MODIFY)
+### Target Problem: MNISTVAE
 
 | Problem | Decoder | Posterior | Difficulty |
 |---------|---------|-----------|------------|
-| `Gaussian1D` | Identity (pixel-space) | Gaussian, analytic | Baseline |
-| `NonlinearDecoder2D(alpha, beta)` | `[z1+αz2², z2+αsin(z1), βz1z2]` | Non-Gaussian, unimodal, grid-exact | Jacobian distortion |
-| `FoldedDecoder2D(alpha)` | `[z1²-z2², 2z1z2, α(z1²+z2²)]` | Bimodal (D(z)=D(-z)), grid-exact | Representation error + multimodality |
+| `MNISTVAE(latent_dim=2, sigma_n=0.2)` | Pretrained MLP VAE `D: ℝ²→[0,1]^784` (28×28 images) | Grid-exact (d_latent=2) | Realistic neural network decoder, large Jacobian norms |
 
-All problems provide: `decoder`, `decoder_jacobian` (analytic), `encoder` (Gauss-Newton), `score` (exact for N(0,I) prior), `denoise` (Tweedie, deterministic or stochastic), `tweedie_cov`, `log_posterior`, `posterior_grid`, `posterior_mean_cov`.
+**Observation model:** `y = D(z*) + σ_n · ε`, with `σ_n=0.2` (per-pixel SNR ≈ 1, digits visible but noisy).
 
-### Existing Solvers (lip/solvers/)
+**Ground truth latent:** `z* = [0.8, -0.5]` (produces a digit "8").
 
-**Pixel-space (1D Gaussian):**
-| Solver | z-std | Status |
-|--------|-------|--------|
-| LATINO | 0.765 | Under-dispersed (proximal contraction) |
-| DPS | 0.916 | Implicit MAP (Tweedie mean only) |
-| **MMPS** | **1.002** | **Calibrated** (Tweedie mean + covariance) |
-| LATINO+SDE | 0.979 | Nearly calibrated (stochastic denoiser) |
-| LFlow | 0.986 | Nearly calibrated (ODE discretization limited) |
+The MNISTVAE problem provides: `decoder`, `decoder_jacobian` (via `jax.jacfwd`), `encoder` (Gauss-Newton), `score` (exact for N(0,I) prior), `denoise` (Tweedie, deterministic or stochastic), `tweedie_cov`, `log_posterior`, `posterior_grid`, `posterior_mean_cov`, `hpd_level`.
 
-**Latent-space (2D problems):**
-| Solver | HPD mean (target 0.5) | Key issue |
-|--------|----------------------|-----------|
-| Latent LATINO | ~0.5 (d²≈2.08) | Trapped in one mode on FoldedDecoder2D |
-| Latent DPS | under-dispersed (d²≈1.25) | Finds both modes but each is too tight |
+**Reference problems (already solved, for context only):**
+- `Gaussian1D` — Pixel-space baseline, analytic posterior. MMPS achieves z_std=1.002 (calibrated).
+- `NonlinearDecoder2D` / `FoldedDecoder2D` — Toy 2D latent problems with analytic decoders.
 
-### Metrics (lip/metrics.py — DO NOT MODIFY)
+### Existing Solvers on MNISTVAE (lip/solvers/)
 
-**Pixel-space:** `calibration_test(problem, solver, key)` → `z_std` (target: 1.000)
+All latent solvers are benchmarked on `MNISTVAE(latent_dim=2, sigma_n=0.2)`:
+
+| Solver | HPD mean (target 0.5) | KS stat (target → 0) | Key issue |
+|--------|----------------------|----------------------|-----------|
+| Latent LATINO | 1.000 | 0.997 | Severely over-dispersed, proximal + encoder round-trip breaks |
+| Latent DPS | 0.966 | 0.937 | Over-dispersed, guidance scaling insufficient |
+| Latent MMPS | 0.926 | 0.843 | Over-dispersed, Tweedie linearization breaks on neural decoder |
+| Latent LFlow | 0.977 | 0.920 | Over-dispersed, ODE discretization error |
+| Latent LATINO+SDE | 0.998 | 0.987 | Severely over-dispersed |
+| Latent Split Gibbs | 1.000 | 0.997 | Severely over-dispersed |
+
+**No method achieves calibrated posteriors.** All are heavily over-dispersed (HPD mean >> 0.5), meaning solver samples land far from the true posterior mass. The diagnostic plots show samples scattered across latent space (z range ±40) while the true posterior is tightly concentrated.
+
+### Metrics (lip/metrics.py)
+
 **Latent-space:** `latent_calibration_test(problem, solver, key)` → `hpd_mean` (target: 0.500), `hpd_ks` (target: → 0)
 
-Use `lip.benchmark(problem)` and `lip.latent_benchmark(problem)` to run all registered solvers.
+Use `lip.latent_benchmark(problem)` or `python scripts/run_mnist_vae.py` to run all registered solvers. Output includes per-solver diagnostic plots with decoded image panels (ground truth, observation, posterior samples).
 
 ### How to add a new solver
 
@@ -82,8 +88,7 @@ import jax.numpy as jnp
 
 def my_method(problem, y, key, *, N=200, **kwargs):
     """Signature must be (problem, y, key, **kwargs) -> samples."""
-    # For pixel-space: return x with same shape as y
-    # For latent-space: return z with shape (..., problem.d_latent)
+    # Return z with shape (..., problem.d_latent)
     ...
     return z
 ```
@@ -98,14 +103,16 @@ LATENT_ALL["My Method"] = my_method
 
 ```python
 # In experiment.py
-from lip import NonlinearDecoder2D, FoldedDecoder2D
+from lip import MNISTVAE
 from lip.metrics import latent_calibration_test, latent_posterior_test
 import jax
 
-problem = NonlinearDecoder2D(alpha=0.5)
+problem = MNISTVAE(latent_dim=2, sigma_n=0.2)
 result = latent_calibration_test(problem, my_solver, jax.random.PRNGKey(0), n=200)
 print(f"HPD mean: {result['hpd_mean']:.3f} (target: 0.500)")
 ```
+
+**Note on MNISTVAE:** The decoder Jacobian has large norms (~10-50). DPS-style guidance scaling (zeta) typically needs significant reduction (~0.01-0.5 vs 1.0 on toy problems). The decoder output is in [0,1]^784 (sigmoid activation).
 
 ---
 
@@ -185,7 +192,7 @@ Must complete in under 2 minutes. If longer, reduce `n` or simplify.
 
 For full benchmarks against all existing solvers:
 ```bash
-python scripts/run_nonlinear.py
+python scripts/run_mnist_vae.py
 ```
 
 ### Step 5: Record
@@ -202,6 +209,16 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 - **If hpd_mean improved** (closer to 0.500) or **hpd_ks decreased**: `git add -A && git commit -m "H{N}: {one-line result}"`
 - **If worse or crashed**: `git checkout -- experiment.py lip/solvers/` (revert), still log in results.tsv
 - **New method that works at all**: commit as a new baseline even if not best
+- **After committing a new solver or improvement**: run `python scripts/run_mnist_vae.py` to benchmark against all existing solvers and update the scoreboard
+
+### Performance monitoring
+- **Check GPU utilization** with `nvidia-smi` when running experiments. If GPU usage is low (<30%), something is wrong:
+  - Python for-loops over samples instead of vectorized JAX operations (use `jax.vmap` or `jax.lax.scan`)
+  - Frequent Python-level iteration instead of compiled XLA kernels
+  - Small batch sizes that don't saturate the GPU
+- **Use `jax.lax.scan`** for iterative algorithms (Langevin, diffusion steps) instead of Python for-loops
+- **Use `jax.vmap`** to vectorize over independent samples when possible
+- **Target**: calibration tests with n=200 should complete in under 2 minutes
 
 ---
 
@@ -213,48 +230,47 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 
 **Secondary: `hpd_ks`** — KS statistic of HPD levels vs Uniform(0,1). Target: → 0.
 
-**Pixel-space metric: `z_std`** — standard deviation of z-scores. Target: **1.000**.
+**Reference (pixel-space) metric: `z_std`** — standard deviation of z-scores. Target: **1.000**. (Only relevant for Gaussian1D reference problem.)
 
-The true posterior is computed by grid evaluation in `problem.posterior_grid()`. This is exact. If Oracle MCMC disagrees with the grid, debug the grid first.
+The true posterior is computed by grid evaluation in `problem.posterior_grid()` over a 200×200 grid on [-4, 4]². This is exact for d_latent=2. If Oracle MCMC disagrees with the grid, debug the grid first.
 
 ---
 
 ## 5. Starting Point
 
-The baselines are already implemented and benchmarked. You do NOT need to reimplement them. Your job starts at improving upon them.
+The baselines are already implemented and benchmarked on MNISTVAE. You do NOT need to reimplement them. Your job starts at improving upon them.
 
 Current state of affairs:
-- **Pixel-space is solved**: MMPS achieves z_std=1.002 on Gaussian1D
-- **Latent-space is not solved**: no method achieves hpd_mean≈0.500 on both NonlinearDecoder2D AND FoldedDecoder2D
-- **The gap**: MMPS is exact for Gaussians but its Tweedie linearization breaks when the decoder is nonlinear. Latent LATINO avoids Tweedie but is structurally trapped in one mode.
+- **All existing methods fail on MNISTVAE**: no method achieves hpd_mean ≈ 0.500 (all are > 0.9, severely over-dispersed)
+- **Best so far**: Latent MMPS (hpd_mean=0.926, KS=0.843) — still far from calibrated
+- **The gap**: The neural network decoder's large Jacobian norms and nonlinearity break all existing approximations. Tweedie linearization (MMPS/DPS), encoder round-trips (LATINO), and Langevin steps (Split Gibbs) all produce samples that scatter far from the true posterior.
+- **Key observation**: Solver samples span z ∈ [-40, 40] while the true posterior is concentrated near the origin. The methods need much tighter control of step sizes / guidance strength for neural decoders.
 
 ---
 
 ## 6. Seed Hypotheses
 
-These are starting directions ordered by expected information gain. You will generate better hypotheses as you learn.
+These are starting directions ordered by expected information gain. You will generate better hypotheses as you learn. All experiments target `MNISTVAE(latent_dim=2, sigma_n=0.2)`.
 
-**H2: Latent MMPS + second-order decoder correction.** The linearization D(z)≈D(ẑ₀)+J·(z-ẑ₀) drops the Hessian. Add bias:
-```
-E[D(z)|z_t] ≈ D(ẑ₀) + 0.5·Tr(H_D · V[z|z_t])
-```
-For our analytic decoder, H_D is known exactly. At what alpha does this matter?
+**H1: Oracle Langevin on exact log-posterior.** Not a diffusion method — just run annealed MALA/ULA on `problem.log_posterior(z, y)` with decreasing temperature. This establishes whether calibrated sampling is achievable at all on MNISTVAE, and validates the grid posterior. Start here.
 
-**H3: Latent LATINO + SDE denoiser.** The pixel-space LATINO+SDE nearly calibrates (z_std=0.979). Does the same trick work in latent space? Just change `problem.denoise(z_noisy, sigma_k)` to `problem.denoise(z_noisy, sigma_k, key=subkey)` in latent_latino.py.
+**H2: Aggressive guidance scaling for DPS/MMPS.** Current solvers are over-dispersed with huge latent excursions (z ∈ [-40, 40]). Try much smaller guidance scale (zeta ≪ 1) and/or gradient clipping. The Jacobian norms of the neural decoder are ~10-50×, so guidance needs proportional dampening.
 
-**H4: Split Gibbs in latent space.** Port PnP-DM to latent space: alternate (a) unconditional diffusion step on z (prior), (b) Langevin step on log p(y|D(z)) (likelihood). No Tweedie, no encoder. Should be asymptotically exact.
+**H3: Latent MMPS + Jacobian-aware covariance scaling.** MMPS uses the Tweedie covariance which doesn't account for the decoder Jacobian conditioning. Scale the covariance correction by `(J^T J)^{-1}` or use a Gauss-Newton Hessian approximation for the likelihood term.
 
-**H5: Few-particle SMC (LD-SMC style).** Run N=2,5,10 parallel reverse-SDE trajectories, weight by p(y|D(ẑ₀)), resample. Minimal change to Latent DPS — just add particles and weights.
+**H4: Few-particle SMC (LD-SMC style).** Run N=2,5,10 parallel reverse-SDE trajectories, weight by `p(y|D(ẑ₀))`, resample. Minimal change to Latent DPS — just add particles and weights. The resampling should concentrate particles near the true posterior.
 
-**H6: Folding decoder stress test.** Run every new method on FoldedDecoder2D. Which ones find both modes? Get mode weights right? This is the hardest test.
+**H5: Split Gibbs with tuned Langevin step size.** The current Split Gibbs is severely over-dispersed. The Langevin likelihood step may need much smaller step size for the neural decoder. Sweep step size and number of inner Langevin steps.
 
-**H7: Gauss-Newton proximal for LATINO.** Replace closed-form pixel-space proximal with iterative Gauss-Newton in latent space: linearize A·D(z) at current z, solve, iterate.
+**H6: Latent LATINO with adaptive proximal strength.** LATINO's proximal step uses a fixed schedule. With a neural decoder, the proximal operator may need tighter coupling (larger δ_k) to prevent drift in pixel space.
 
-**H8: Phase diagrams.** For the best 2-3 methods, sweep alpha ∈ [0, 1.5] on NonlinearDecoder2D. Plot hpd_mean vs alpha → shows exactly where each method breaks.
+**H7: Direct MCMC baseline (HMC/NUTS).** Use NumPyro to run HMC/NUTS on the exact `log_posterior`. This gives a gold-standard posterior to compare against and reveals whether the grid posterior is correct.
 
-**H9: Random MLP decoder.** Add a `RandomMLPDecoder2D` problem (frozen random MLP, R²→R¹⁶). Do conclusions generalize beyond the analytic decoder?
+**H8: Noise schedule tuning.** The diffusion noise schedule (number of steps, min/max sigma) was tuned for toy problems. The neural decoder may need a different schedule — more steps, smaller sigma_max, or different spacing.
 
-**H10: Annealed Langevin on exact log-posterior.** Not a diffusion method — just run annealed MALA/ULA on `problem.log_posterior(z, y)` with decreasing temperature. Use as a second oracle to validate grid posteriors and bound achievable calibration.
+**H9: Encoder-free methods.** LATINO relies on a Gauss-Newton encoder which may be inaccurate for the neural decoder. Methods that avoid the encoder entirely (DPS, Split Gibbs, SMC) may have an advantage if properly tuned.
+
+**H10: Sigma_n sensitivity sweep.** Run the best 2-3 methods across sigma_n ∈ [0.1, 0.2, 0.5, 1.0, 2.0] to map where calibration breaks down and understand the dependence on SNR.
 
 ---
 
@@ -263,10 +279,11 @@ For our analytic decoder, H_D is known exactly. At what alpha does this matter?
 As you accumulate results, you SHOULD propose new hypotheses. Write them in `results/insights.md`.
 
 **Signs you should pivot:**
-- Method works on NonlinearDecoder2D but breaks on FoldedDecoder2D → multimodality is the bottleneck
-- Method works at alpha=0.3 but fails at alpha=0.7 → nonlinearity matters, investigate Jacobian spectrum
+- Method reduces over-dispersion but plateaus at hpd_mean > 0.7 → fundamental approximation issue, try a different family of methods
+- Method works on toy NonlinearDecoder2D but fails on MNISTVAE → neural decoder Jacobian structure is the bottleneck
 - Method is calibrated but 100× slower → look for cost reduction
 - Unexpected method achieves hpd_mean≈0.5 → understand WHY, derive the math, this could be a paper
+- Oracle MCMC (H1/H7) fails to calibrate → grid posterior may be wrong, debug metrics first
 
 **Signs you should search literature:**
 - You've found a specific mathematical structure matters → search if studied
@@ -317,7 +334,7 @@ rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, g
 
 ## 9. Completion
 
-Output `<promise>BREAKTHROUGH</promise>` if you achieve perfect calibration with cost ≤ 10× single-trajectory Latent DPS
+Output `<promise>BREAKTHROUGH</promise>` if you achieve hpd_mean ∈ [0.45, 0.55] and hpd_ks < 0.1 on MNISTVAE(latent_dim=2, sigma_n=0.2) with cost ≤ 10× single-trajectory Latent DPS
 
 Otherwise iterate until `--max-iterations`, then write `results/summary.md`:
 ```markdown

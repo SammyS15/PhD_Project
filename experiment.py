@@ -1,8 +1,9 @@
-"""H1h: Oracle ULA verification with n=500 + record baseline.
+"""Iteration 20: Check grid sampler KS floor + try higher grid resolution.
 
-Verify step=0.3, N=5000 achieves calibration with larger sample.
-Then commit as the Oracle baseline.
+If the grid posterior sampler itself has KS > 0, that's a floor for all methods.
+Also try increasing grid resolution from 200 to 400 to reduce this floor.
 """
+import time
 import jax
 import jax.numpy as jnp
 from lip import MNISTVAE
@@ -11,54 +12,60 @@ from lip.metrics import latent_calibration_test
 problem = MNISTVAE(latent_dim=2, sigma_n=0.2)
 
 
-def _precond_ula_single(problem, y, key, *, N=5000, step_size=0.3, burnin=1000):
-    d = problem.d_latent
-    z_map = problem.encoder(y)
-    H = jax.hessian(lambda z: problem.log_posterior(z, y))(z_map)
-    neg_H = -H
-    L = jnp.linalg.cholesky(neg_H)
-    L_inv = jnp.linalg.inv(L)
-    cov = L_inv.T @ L_inv
-    grad_log_p = jax.grad(lambda z: problem.log_posterior(z, y))
-
-    def step(carry, _):
-        z, key = carry
-        key, k1 = jax.random.split(key)
-        g = grad_log_p(z)
-        z = z + step_size * (cov @ g) + jnp.sqrt(2 * step_size) * (L_inv.T @ jax.random.normal(k1, (d,)))
-        return (z, key), None
-
-    (z_final, _), _ = jax.lax.scan(step, (z_map, key), None, length=N + burnin)
-    return z_final
+# Grid posterior sampler — samples directly from the grid posterior
+def _grid_sample_single(problem, y, key, grid_size=200):
+    """Sample from grid-discretized posterior (gold standard)."""
+    z1, z2, Z1, Z2, p, dz = problem.posterior_grid(y, grid_size=grid_size)
+    # Sample from flattened probability
+    log_p_flat = jnp.log(p + 1e-30).reshape(-1)
+    log_p_flat = log_p_flat - jax.scipy.special.logsumexp(log_p_flat)
+    idx = jax.random.categorical(key, log_p_flat)
+    i, j = jnp.divmod(idx, z2.shape[0])
+    return jnp.array([z1[j], z2[i]])
 
 
-def oracle_precond_ula(problem, y, key, *, N=5000, step_size=0.3, burnin=1000, **kwargs):
+def grid_sampler(problem, y, key, **kwargs):
     if y.ndim == 1:
-        return _precond_ula_single(problem, y, key, N=N, step_size=step_size, burnin=burnin)
+        return _grid_sample_single(problem, y, key)
     keys = jax.random.split(key, y.shape[0])
-    return jax.vmap(
-        lambda yi, ki: _precond_ula_single(problem, yi, ki, N=N, step_size=step_size, burnin=burnin)
-    )(y, keys)
+    return jnp.stack([_grid_sample_single(problem, y[i], keys[i]) for i in range(y.shape[0])])
+
+
+# Grid sampler with higher resolution
+def _grid_sample_fine_single(problem, y, key):
+    """Sample from grid-discretized posterior with 400x400 grid."""
+    return _grid_sample_single(problem, y, key, grid_size=400)
+
+
+def grid_sampler_fine(problem, y, key, **kwargs):
+    if y.ndim == 1:
+        return _grid_sample_fine_single(problem, y, key)
+    keys = jax.random.split(key, y.shape[0])
+    return jnp.stack([_grid_sample_fine_single(problem, y[i], keys[i]) for i in range(y.shape[0])])
 
 
 if __name__ == "__main__":
+    # Grid sampler floor at n=1000
+    print("=== Grid sampler KS floor ===")
     key = jax.random.PRNGKey(0)
+    t0 = time.time()
+    r = latent_calibration_test(problem, grid_sampler, key, n=1000)
+    t1 = time.time()
+    print(f"Grid 200x200, n=1000: hpd={r['hpd_mean']:.3f}, std={r['hpd_std']:.3f}, KS={r['hpd_ks']:.3f} ({t1-t0:.0f}s)")
 
-    # Verification with n=500
-    print("=== Oracle Preconditioned ULA (step=0.3, N=5000, n=500) ===")
-    result = latent_calibration_test(
-        problem, oracle_precond_ula, key, n=500,
-        step_size=0.3, N=5000, burnin=1000
-    )
-    print(f"HPD mean: {result['hpd_mean']:.3f} (target: 0.500)")
-    print(f"HPD std:  {result['hpd_std']:.3f} (target: 0.289)")
-    print(f"HPD KS:   {result['hpd_ks']:.3f} (target: < 0.1)")
+    # Fine grid sampler
+    print("\n=== Fine grid (400x400) sampler ===")
+    key = jax.random.PRNGKey(0)
+    t0 = time.time()
+    r = latent_calibration_test(problem, grid_sampler_fine, key, n=1000)
+    t1 = time.time()
+    print(f"Grid 400x400, n=1000: hpd={r['hpd_mean']:.3f}, std={r['hpd_std']:.3f}, KS={r['hpd_ks']:.3f} ({t1-t0:.0f}s)")
 
-    # Also re-evaluate existing solvers with fixed grid
-    print("\n=== All solvers with adaptive fine grid (n=200) ===")
-    from lip.solvers import LATENT_ALL
-    for name, solver in LATENT_ALL.items():
-        k, key = jax.random.split(key)
-        r = latent_calibration_test(problem, solver, k, n=200)
-        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
-        print(f"  {name:<25s}: hpd={r['hpd_mean']:.3f} KS={r['hpd_ks']:.3f} {ok}")
+    # Oracle Langevin at n=1000 for comparison
+    print("\n=== Oracle Langevin (N=3000, lr=5e-7) ===")
+    from lip.solvers import oracle_langevin
+    key = jax.random.PRNGKey(0)
+    t0 = time.time()
+    r = latent_calibration_test(problem, oracle_langevin, key, n=1000)
+    t1 = time.time()
+    print(f"n=1000: hpd={r['hpd_mean']:.3f}, std={r['hpd_std']:.3f}, KS={r['hpd_ks']:.3f} ({t1-t0:.0f}s)")
