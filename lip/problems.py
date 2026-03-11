@@ -408,7 +408,7 @@ class MNISTVAE:
     Train with: python scripts/train_vae.py --latent-dim <dim>
     """
 
-    sigma_n: float = 5.0
+    sigma_n: float = 0.2
     sigma_0: float = 1.0
     latent_dim: int = 2
     weights_path: str = None

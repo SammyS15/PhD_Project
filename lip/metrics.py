@@ -168,6 +168,7 @@ def latent_benchmark(problem, solvers=None, key=None, *, y_star=None,
         solvers = LATENT_ALL
     if key is None:
         key = jax.random.PRNGKey(0)
+    z_star = None
     if y_star is None:
         # Generate a typical observation
         k, key = jax.random.split(key)
@@ -184,7 +185,8 @@ def latent_benchmark(problem, solvers=None, key=None, *, y_star=None,
     _print_latent_table(problem, results)
 
     if output_dir is not None:
-        _save_latent_results(problem, results, y_star, Path(output_dir))
+        _save_latent_results(problem, results, y_star, Path(output_dir),
+                             z_star=z_star)
 
     return results
 
@@ -200,7 +202,7 @@ def _print_latent_table(problem, results):
               f" {r['hpd_ks']:9.3f}")
 
 
-def _save_latent_results(problem, results, y_star, output_dir):
+def _save_latent_results(problem, results, y_star, output_dir, z_star=None):
     """Save per-solver contour plots and summary JSON."""
     import matplotlib
     matplotlib.use("Agg")
@@ -213,27 +215,71 @@ def _save_latent_results(problem, results, y_star, output_dir):
     z1, z2, _, _, p, _ = problem.posterior_grid(y_star)
     grid_cache = (np.array(z1), np.array(z2), np.array(p))
 
+    # Check if the problem has a pixel-space decoder (e.g. MNISTVAE)
+    has_images = hasattr(problem, 'd_pixel') and problem.d_pixel > 10
+
     problem_name = type(problem).__name__.lower()
     for name, r in results.items():
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        if has_images:
+            n_sample_imgs = 4
+            n_panels = 2 + n_sample_imgs  # ground truth + obs + samples
+            if z_star is None:
+                n_panels -= 1
+            fig = plt.figure(figsize=(14, 9))
+            gs = fig.add_gridspec(2, n_panels, height_ratios=[1.2, 0.5],
+                                  hspace=0.35, wspace=0.3)
+            # Top row: contour and HPD span half each
+            half = n_panels // 2
+            ax_contour = fig.add_subplot(gs[0, :half])
+            ax_hpd = fig.add_subplot(gs[0, half:])
+        else:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            ax_contour = axes[0]
+            ax_hpd = axes[1]
 
         # Left: posterior contours + solver samples
-        problem.plot(r["samples"], y_star, name, ax=axes[0], _grid_cache=grid_cache)
+        problem.plot(r["samples"], y_star, name, ax=ax_contour,
+                     _grid_cache=grid_cache)
 
         # Right: HPD level histogram
         hpd = np.array(r["hpd_levels"])
-        axes[1].hist(hpd, bins=20, range=(0, 1), density=True, alpha=0.7,
+        ax_hpd.hist(hpd, bins=20, range=(0, 1), density=True, alpha=0.7,
                      color="steelblue", edgecolor="white")
-        axes[1].axhline(1.0, color="red", ls="--", lw=1.5, label="Uniform(0,1)")
-        axes[1].set_xlabel("HPD level")
-        axes[1].set_ylabel("Density")
-        axes[1].set_title(
+        ax_hpd.axhline(1.0, color="red", ls="--", lw=1.5, label="Uniform(0,1)")
+        ax_hpd.set_xlabel("HPD level")
+        ax_hpd.set_ylabel("Density")
+        ax_hpd.set_title(
             f"HPD calibration (mean={r['hpd_mean']:.3f}, KS={r['hpd_ks']:.3f})")
-        axes[1].set_xlim(0, 1)
-        axes[1].legend(fontsize=9)
+        ax_hpd.set_xlim(0, 1)
+        ax_hpd.legend(fontsize=9)
 
-        plt.suptitle(name, fontsize=13)
-        plt.tight_layout()
+        # Bottom row: decoded images (ground truth, observation, posterior samples)
+        if has_images:
+            panels = []
+            labels = []
+            if z_star is not None:
+                panels.append(np.array(problem.decoder(z_star)).reshape(28, 28))
+                labels.append("Ground truth D(z*)")
+            panels.append(np.clip(np.array(y_star).reshape(28, 28), 0, 1))
+            labels.append("Observation y")
+            # Pick a few evenly-spaced posterior samples
+            samples = np.array(r["samples"])
+            n_s = len(samples)
+            idxs = np.linspace(0, n_s - 1, n_sample_imgs, dtype=int)
+            for j, idx in enumerate(idxs):
+                z_j = jnp.array(samples[idx])
+                panels.append(np.array(problem.decoder(z_j)).reshape(28, 28))
+                labels.append(f"Sample {j+1}")
+
+            for i, (img, label) in enumerate(zip(panels, labels)):
+                ax = fig.add_subplot(gs[1, i])
+                ax.imshow(img, cmap="gray", vmin=0, vmax=1)
+                ax.set_title(label, fontsize=9)
+                ax.axis("off")
+
+        plt.suptitle(name, fontsize=14, y=0.98)
+        if not has_images:
+            plt.tight_layout()
         solver_name = name.lower().replace('+', '_').replace(' ', '_')
         fig.savefig(output_dir / f"{problem_name}_{solver_name}.png", dpi=150)
         plt.close(fig)

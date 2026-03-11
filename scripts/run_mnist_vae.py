@@ -21,7 +21,7 @@ from lip.solvers import LATENT_ALL
 def main():
     parser = argparse.ArgumentParser(description="MNIST VAE benchmark")
     parser.add_argument("--latent-dim", type=int, default=2)
-    parser.add_argument("--sigma-n", type=float, default=5.0)
+    parser.add_argument("--sigma-n", type=float, default=0.2)
     parser.add_argument("--n-cal", type=int, default=200,
                         help="Number of calibration samples (grid eval is expensive)")
     parser.add_argument("--n-samples", type=int, default=2000,
