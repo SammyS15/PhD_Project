@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lip"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["jax", "jaxlib"]
+
+[tool.setuptools.packages.find]
+include = ["lip*"]
+
+[project.optional-dependencies]
+plot = ["matplotlib", "scipy"]
