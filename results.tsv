@@ -36,5 +36,6 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 13	2026-03-11	H14: Latent LFlow	Latent LFlow (z=1.0)	NonlinearDecoder2D	0.5	0.504	0.051	-	SAME	ODE works on NL but fails Folded
 13	2026-03-11	H14: Latent LFlow	Latent LFlow (z=1.2)	FoldedDecoder2D	1.0	0.531	0.073	-	SAME	needs different zeta than NL
 15	2026-03-11	H16: Woodbury	MMPS Woodbury	both	-	identical	identical	-	SAME	push-through identity: d_latent solve instead of d_pixel
+16	2026-03-11	lit search	-	-	-	-	-	-	-	no prior work combines MMPS Tweedie cov + decoder Jacobian for calibration
 14	2026-03-11	H15: noise sweep	Latent MMPS (z=1.1)	NonlinearDecoder2D	0.5	0.491-0.529	0.042-0.091	-	BETTER	calibrated at ALL sigma_n ∈ [0.1,1.0]
 14	2026-03-11	H15: noise sweep	Latent MMPS (z=1.1)	FoldedDecoder2D	1.0	0.488-0.518	0.033-0.108	-	SAME	calibrated except sigma_n=0.1 (KS=0.108)

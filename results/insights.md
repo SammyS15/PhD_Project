@@ -60,9 +60,17 @@
 - The Tweedie covariance V_t is crucial at low noise: without it (DPS), guidance overwhelms the prior
 - FoldedDecoder2D borderline at sigma_n=0.1 (KS=0.108) — tight bimodal posterior is hardest case
 
+## Literature Search (iter 16)
+- Searched for "moment matching + decoder Jacobian + latent space + calibration"
+- No existing paper combines MMPS-style Tweedie covariance with decoder Jacobian for calibrated latent posteriors
+- Closest: STSL (2nd-order Tweedie, CVPR 2024) — reconstruction quality focus, not calibration
+- Closest: C-DPS (coupled dynamics, NeurIPS 2025) — pixel+measurement space, not latent Jacobian-aware
+- Closest: LD-SMC (Achituve, ICML 2025) — formal convergence but needs many particles
+- **Latent MMPS is novel**: the push-through identity + Tweedie covariance propagation through J_D is not in the literature
+
 ## New Hypotheses (agent-generated)
 - H13b: Local nonlinearity measure for zeta auto-tuning
-- H16: Higher N for FoldedDecoder2D at sigma_n=0.1 to fix the remaining edge case
+- Write a paper on Latent MMPS
 
 ## Dead Ends
 - H2 (second-order Hessian correction): buggy with batched inputs, and unnecessary since adaptive zeta achieves same result more simply
