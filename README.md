@@ -18,9 +18,11 @@ Diffusion models are powerful generative priors, but using them for **Bayesian i
 
 Scientific applications (cosmology, medical imaging, geophysics) require uncertainty quantification that is **statistically calibrated**: credible intervals must have correct coverage. Most existing methods (DPS, LATINO, etc.) produce high-quality reconstructions but are demonstrably miscalibrated — they behave more like MAP estimators than posterior samplers.
 
-**This project systematically evaluates diffusion-based inverse solvers on problems where the exact posterior is known analytically**, exposing fundamental calibration gaps and identifying which algorithmic ideas can lead to properly calibrated posteriors in latent space.
+**This project systematically evaluates diffusion-based inverse solvers on problems where the exact posterior is known**, exposing fundamental calibration gaps and identifying which algorithmic ideas can lead to properly calibrated posteriors in latent space.
 
 ## Key Findings
+
+### 1D Gaussian (pixel-space baseline)
 
 On a 1D Gaussian test problem where the exact posterior is available:
 
@@ -34,14 +36,29 @@ On a 1D Gaussian test problem where the exact posterior is available:
 
 *Target: mean = 1.200, std = 0.447, z-std = 1.000*
 
-- **MMPS** (moment-matching posterior sampling) is exactly calibrated for Gaussians — the Tweedie covariance makes the likelihood approximation exact.
-- **LFlow** (flow matching with posterior velocity) is theoretically exact but limited by Euler discretization of a stiff ODE.
-- **DPS** ignores posterior covariance and behaves as an [implicit MAP estimator](https://arxiv.org/abs/2501.18913), not a posterior sampler.
-- **LATINO** is provably under-dispersed due to its proximal contraction step.
+### 2D Latent space with nonlinear decoder
 
-The central open problem: **no existing method provides calibrated posteriors with latent diffusion models**. The decoder Jacobian distortion, representation error, and nonlinearity of the decode-encode roundtrip remain unsolved. See [`report.md`](report.md) for the full literature survey and analysis.
+On `NonlinearDecoder2D` (D: R^2 -> R^3, nonlinear but injective):
+
+| Method | d² mean (target: 2.0) | d² std (target: 2.0) |
+|--------|:-:|:-:|
+| **Latent LATINO** | **2.08** | 3.95 |
+| Latent DPS | 1.25 | 1.19 |
+
+### Bimodal posterior (folding decoder)
+
+On `FoldedDecoder2D` where `D(z) = D(-z)` creates a guaranteed bimodal posterior:
+
+| Method | Behavior |
+|--------|----------|
+| Latent LATINO | Trapped in one mode (encoder always picks the same root) |
+| Latent DPS | Finds both modes, but each is under-dispersed |
+
+This cleanly separates two failure mechanisms: **representation error** (LATINO can't escape the encoder's choice of mode) vs. **Tweedie approximation error** (DPS treats each mode as too concentrated).
 
 ## Methods Compared
+
+### Pixel-space solvers (1D Gaussian)
 
 | Method | Paper | Approach | Calibrated? |
 |--------|-------|----------|:-:|
@@ -51,23 +68,47 @@ The central open problem: **no existing method provides calibrated posteriors wi
 | **LATINO+SDE** | — | LATINO with stochastic denoiser | Nearly |
 | **LFlow** | [Askari et al., 2025](https://arxiv.org/abs/2511.06138) | Flow matching + posterior velocity field | Yes (theory) |
 
+### Latent-space solvers (2D problems)
+
+| Method | Approach | Key property |
+|--------|----------|:-------------|
+| **Latent LATINO** | Encode -> noise -> denoise -> decode -> proximal (pixel space) | Paper-accurate Algorithm 1; avoids decoder Jacobian |
+| **Latent DPS** | Reverse SDE with Jacobian-based guidance in latent space | Can explore multiple modes |
+
+## Test Problems
+
+The problems form a hierarchy of increasing difficulty:
+
+| Problem | Decoder | Posterior | Tests |
+|---------|---------|-----------|-------|
+| `Gaussian1D` | Identity | Gaussian (analytic) | Baseline calibration |
+| `NonlinearDecoder2D` | `[z1+αz2², z2+αsin(z1), βz1z2]` | Non-Gaussian, unimodal (grid) | Jacobian distortion, Tweedie breakdown |
+| `FoldedDecoder2D` | `[z1²-z2², 2z1z2, α(z1²+z2²)]` | Bimodal (grid) | Representation error, mode collapse |
+
+All latent problems provide an analytic decoder Jacobian and a Gauss-Newton least-squares encoder, so no neural networks are needed.
+
 ## Quick Start
 
 ```bash
 git clone https://github.com/EiffL/LatentInverseProblems.git
 cd LatentInverseProblems
 python -m venv .venv && source .venv/bin/activate
-pip install -e .                  # installs the lip library
-python scripts/run_gaussian.py    # run benchmark, save plots + JSON
+pip install -e .
+python scripts/run_gaussian.py      # 1D Gaussian benchmark
+python scripts/run_nonlinear.py     # 2D latent-space benchmarks
 ```
 
-This prints a calibration summary table and saves per-solver diagnostic plots and a `results.json` to `results/<git-hash>/`.
-
-### One-liner benchmark from Python
+### One-liner benchmarks from Python
 
 ```python
 import lip
-results = lip.benchmark(lip.Gaussian1D())
+
+# Pixel-space
+lip.benchmark(lip.Gaussian1D())
+
+# Latent-space
+lip.latent_benchmark(lip.NonlinearDecoder2D())
+lip.latent_benchmark(lip.FoldedDecoder2D())
 ```
 
 ### Prototype a new solver
@@ -93,21 +134,26 @@ print(f"z-std: {result['z_std']:.3f}")  # target: 1.000
 
 ```
 lip/
-├── __init__.py           # re-exports: Gaussian1D, benchmark, print_table
-├── problems.py           # Gaussian1D dataclass (problem defines its own diagnostic plot)
-├── metrics.py            # calibration_test, posterior_test, benchmark, print_table
+├── __init__.py              # re-exports: problems, benchmarks, metrics
+├── problems.py              # Gaussian1D, NonlinearDecoder2D, FoldedDecoder2D
+├── metrics.py               # calibration_test, posterior_test, benchmark,
+│                            # latent_calibration_test, latent_posterior_test, latent_benchmark
 └── solvers/
-    ├── __init__.py       # ALL dict + re-exports
-    ├── latino.py         # LATINO (PF-ODE + proximal step)
-    ├── dps.py            # DPS (reverse SDE + Tweedie mean guidance)
-    ├── mmps.py           # MMPS (DPS + Tweedie covariance correction)
-    ├── latino_sde.py     # LATINO with stochastic denoiser
-    └── lflow.py          # LFlow (flow matching + posterior velocity)
+    ├── __init__.py           # ALL dict (pixel-space) + LATENT_ALL dict (latent-space)
+    ├── latino.py             # LATINO (PF-ODE + proximal)
+    ├── dps.py                # DPS (reverse SDE + Tweedie mean guidance)
+    ├── mmps.py               # MMPS (DPS + Tweedie covariance)
+    ├── latino_sde.py         # LATINO with stochastic denoiser
+    ├── lflow.py              # LFlow (flow matching + posterior velocity)
+    ├── latent_latino.py      # Latent LATINO (encode→denoise→decode→proximal)
+    ├── latent_dps.py         # Latent DPS (Jacobian-based guidance)
+    └── _latent_proximal.py   # Shared Gauss-Newton proximal step
 scripts/
-└── run_gaussian.py       # benchmark demo → results/<git-hash>/
+├── run_gaussian.py           # 1D Gaussian benchmark
+└── run_nonlinear.py          # 2D latent-space benchmarks
 ```
 
-Every solver is a single function with signature `(problem, y, key, **kwargs) -> x`. Each file is self-contained — read it top to bottom and you understand the complete algorithm.
+Every solver is a single function with signature `(problem, y, key, **kwargs) -> x_or_z`. Each file is self-contained — read it top to bottom and you understand the complete algorithm.
 
 ## Notebooks
 
@@ -131,4 +177,4 @@ Every solver is a single function with signature `(problem, y, key, **kwargs) ->
 - **[JAX](https://github.com/google/jax)** — Autodiff & JIT; scores computed via `jax.grad` on exact log-densities
 - **[diffrax](https://github.com/patrick-kidger/diffrax)** — ODE/SDE integration (Tsit5, Euler-Maruyama) — used in notebooks
 - **[NumPyro](https://github.com/pyro-ppl/numpyro)** — Mixture model construction for the two-moons prior — used in notebooks
-- **[matplotlib](https://matplotlib.org/)** / **[scipy](https://scipy.org/)** — Diagnostic plots (histogram + QQ)
+- **[matplotlib](https://matplotlib.org/)** / **[scipy](https://scipy.org/)** — Diagnostic plots
