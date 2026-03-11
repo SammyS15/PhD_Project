@@ -228,24 +228,11 @@ Current state of affairs:
 - **Latent-space is not solved**: no method achieves hpd_mean≈0.500 on both NonlinearDecoder2D AND FoldedDecoder2D
 - **The gap**: MMPS is exact for Gaussians but its Tweedie linearization breaks when the decoder is nonlinear. Latent LATINO avoids Tweedie but is structurally trapped in one mode.
 
-**First thing to do (iteration 0):**
-1. Seed the knowledge base: create `papers/index.md` and summaries for the 8 key papers from `report.md` (rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, gupta2024, rao2025)
-2. Run `python scripts/run_nonlinear.py` to establish baseline numbers
-3. Record baselines in `results.tsv` and `results/scoreboard.md`
-4. Initialize `results/insights.md` with the known failure modes
-
 ---
 
 ## 6. Seed Hypotheses
 
 These are starting directions ordered by expected information gain. You will generate better hypotheses as you learn.
-
-**H1: Latent MMPS.** Port MMPS to latent space: propagate Tweedie covariance through the decoder Jacobian. The guidance becomes:
-```
-p(y|z_t) ≈ N(y | D(ẑ₀), σ_n²I + J_D · V[z|z_t] · J_Dᵀ)
-```
-This is the natural extension of what works in pixel space. Test on NonlinearDecoder2D, sweep alpha 0→1.
-**Success criterion:** hpd_mean closer to 0.5 than Latent DPS.
 
 **H2: Latent MMPS + second-order decoder correction.** The linearization D(z)≈D(ẑ₀)+J·(z-ẑ₀) drops the Hessian. Add bias:
 ```
@@ -286,6 +273,13 @@ As you accumulate results, you SHOULD propose new hypotheses. Write them in `res
 - You've invented something that works → search if published
 - Stuck for 3+ iterations → search adjacent fields
 
+**Signs you should implement more methods from the litterature:**
+- If your solution becomes very good, make sure to implement SOTA algorithms from the litterature to compare to
+
+**Signs you should implement a new test**
+- If your solution becomes very good and that it's difficult to see any difference between methods, you may consider extending the 
+set of test problems. But keep in mind that test problems should be fast, and able to provide clear insights. Also compare SOTA on new problems.
+
 **Track the evolving program in `results/insights.md`:**
 ```markdown
 ## Key Findings (numbered, one line each)
@@ -323,11 +317,7 @@ rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, g
 
 ## 9. Completion
 
-Output `<promise>BREAKTHROUGH</promise>` if you achieve:
-- hpd_mean ∈ [0.45, 0.55] AND hpd_ks < 0.10
-- On NonlinearDecoder2D with alpha ≥ 0.5
-- AND on FoldedDecoder2D
-- With cost ≤ 10× single-trajectory Latent DPS
+Output `<promise>BREAKTHROUGH</promise>` if you achieve perfect calibration with cost ≤ 10× single-trajectory Latent DPS
 
 Otherwise iterate until `--max-iterations`, then write `results/summary.md`:
 ```markdown
