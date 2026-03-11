@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 
 
-def latent_mmps(problem, y, key, *, N=200, sigma_max=3.0, sigma_min=0.01, zeta=1.0):
+def latent_mmps(problem, y, key, *, N=200, sigma_max=3.0, sigma_min=0.01, zeta=1.1):
     """Latent MMPS: DPS + Tweedie covariance through decoder Jacobian."""
     key, subkey = jax.random.split(key)
     z = jnp.sqrt(problem.sigma_0**2 + sigma_max**2) * jax.random.normal(
