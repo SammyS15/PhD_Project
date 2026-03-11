@@ -270,9 +270,8 @@ class NonlinearDecoder2D:
             _, _, _, _, p_grid, dz = self.posterior_grid(
                 y_i, grid_range=grid_range, grid_size=grid_size
             )
-            # Density at the sample point (evaluate directly, not interpolated)
+            # Density at the sample point on the same normalized scale
             log_p_z = self.log_posterior(z_i, y_i)
-            # We need this on the same scale as p_grid. Recompute normalization.
             z1 = jnp.linspace(-grid_range, grid_range, grid_size)
             z2 = jnp.linspace(-grid_range, grid_range, grid_size)
             Z1, Z2 = jnp.meshgrid(z1, z2)
@@ -280,8 +279,8 @@ class NonlinearDecoder2D:
             log_p_grid = self.log_posterior(z_grid, y_i)
             log_norm = jax.scipy.special.logsumexp(log_p_grid) + jnp.log(dz)
             p_at_z = jnp.exp(log_p_z - log_norm)
-            # Fraction of mass with density >= p_at_z
-            alpha = jnp.sum(p_grid[p_grid >= p_at_z]) * dz
+            # Fraction of mass with density >= p_at_z (vmap-safe: no boolean indexing)
+            alpha = jnp.sum(jnp.where(p_grid >= p_at_z, p_grid, 0.0)) * dz
             return alpha
 
         # Handle both single and batch inputs

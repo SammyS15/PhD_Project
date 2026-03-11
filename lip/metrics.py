@@ -215,8 +215,24 @@ def _save_latent_results(problem, results, y_star, output_dir):
 
     problem_name = type(problem).__name__.lower()
     for name, r in results.items():
-        fig, ax = plt.subplots(figsize=(6, 6))
-        problem.plot(r["samples"], y_star, name, ax=ax, _grid_cache=grid_cache)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Left: posterior contours + solver samples
+        problem.plot(r["samples"], y_star, name, ax=axes[0], _grid_cache=grid_cache)
+
+        # Right: HPD level histogram
+        hpd = np.array(r["hpd_levels"])
+        axes[1].hist(hpd, bins=20, range=(0, 1), density=True, alpha=0.7,
+                     color="steelblue", edgecolor="white")
+        axes[1].axhline(1.0, color="red", ls="--", lw=1.5, label="Uniform(0,1)")
+        axes[1].set_xlabel("HPD level")
+        axes[1].set_ylabel("Density")
+        axes[1].set_title(
+            f"HPD calibration (mean={r['hpd_mean']:.3f}, KS={r['hpd_ks']:.3f})")
+        axes[1].set_xlim(0, 1)
+        axes[1].legend(fontsize=9)
+
+        plt.suptitle(name, fontsize=13)
         plt.tight_layout()
         solver_name = name.lower().replace('+', '_').replace(' ', '_')
         fig.savefig(output_dir / f"{problem_name}_{solver_name}.png", dpi=150)
@@ -233,8 +249,9 @@ def _save_latent_results(problem, results, y_star, output_dir):
             name: {
                 "mean": _to_list(r["mean"]),
                 "target_mean": _to_list(r["target_mean"]),
-                "maha2_mean": r["maha2_mean"],
-                "maha2_std": r["maha2_std"],
+                "hpd_mean": r["hpd_mean"],
+                "hpd_std": r["hpd_std"],
+                "hpd_ks": r["hpd_ks"],
             }
             for name, r in results.items()
         },
