@@ -111,35 +111,36 @@ def _save_results(problem, results, y_star, output_dir):
 
 # --- 2D latent-space metrics ---
 
-def latent_calibration_test(problem, solver, key, *, n=500, grid_size=100,
+def latent_calibration_test(problem, solver, key, *, n=500, grid_size=200,
                             grid_range=4.0, **solver_kw):
-    """Calibration test for 2D latent problems using Mahalanobis distance.
+    """HPD calibration test for 2D latent problems.
 
-    For each (z_true, y) pair, computes the grid-based posterior mean/cov
-    and the Mahalanobis distance of the solver sample.
-    Under calibration: d² ~ χ²(d_latent), so mean ≈ d_latent.
+    For each (z_true, y) pair, runs the solver and computes the HPD level
+    of the solver sample under the true grid posterior.
+
+    Under perfect calibration: HPD levels ~ Uniform(0,1), mean ≈ 0.5.
+    Under-dispersed: mean < 0.5 (samples near mode).
+    Over-dispersed: mean > 0.5 (samples in tails).
     """
     k1, k2 = jax.random.split(key)
     z_true, y_obs = problem.sample_joint(k1, n)
     z_samples = solver(problem, y_obs, k2, **solver_kw)
 
-    mu, cov = problem.posterior_mean_cov_batch(
-        y_obs, grid_range=grid_range, grid_size=grid_size
+    hpd_levels = problem.hpd_level(
+        z_samples, y_obs, grid_range=grid_range, grid_size=grid_size
     )
 
-    # Mahalanobis distance of solver samples
-    diff = z_samples - mu  # (n, 2)
-    cov_inv = jnp.linalg.inv(cov)  # (n, 2, 2)
-    maha2 = jnp.einsum('ni,nij,nj->n', diff, cov_inv, diff)
+    # KS test against Uniform(0,1)
+    sorted_levels = jnp.sort(hpd_levels)
+    n_samples = len(sorted_levels)
+    uniform_cdf = jnp.linspace(0.5 / n_samples, 1 - 0.5 / n_samples, n_samples)
+    ks_stat = float(jnp.max(jnp.abs(sorted_levels - uniform_cdf)))
 
-    # Under χ²(d): mean = d, std = sqrt(2d)
-    d = problem.d_latent
     return {
-        "maha2_mean": float(jnp.mean(maha2)),
-        "maha2_std": float(jnp.std(maha2)),
-        "maha2_target_mean": float(d),
-        "maha2_target_std": float(jnp.sqrt(2 * d)),
-        "maha2": maha2,
+        "hpd_mean": float(jnp.mean(hpd_levels)),
+        "hpd_std": float(jnp.std(hpd_levels)),
+        "hpd_ks": ks_stat,
+        "hpd_levels": hpd_levels,
     }
 
 
@@ -190,19 +191,13 @@ def latent_benchmark(problem, solvers=None, key=None, *, y_star=None,
 
 def _print_latent_table(problem, results):
     """Print summary table for latent benchmark."""
-    d = problem.d_latent
-    print(f"\n{'Method':<20} {'μ_z1':>7} {'μ_z2':>7} {'σ²_z1':>7} {'σ²_z2':>7}"
-          f" {'d²_mean':>8} {'d²_std':>8}")
-    print("─" * 70)
+    print(f"\n{'Method':<20} {'HPD mean':>9} {'HPD std':>9} {'KS stat':>9}")
+    print(f"{'(calibrated)':<20} {'0.500':>9} {'0.289':>9} {'→ 0':>9}")
+    print("─" * 50)
 
     for name, r in results.items():
-        mu = jnp.asarray(r["mean"])
-        cov = jnp.asarray(r["cov"])
-        print(f"{name:<20} {float(mu[0]):7.3f} {float(mu[1]):7.3f}"
-              f" {float(cov[0, 0]):7.3f} {float(cov[1, 1]):7.3f}"
-              f" {r['maha2_mean']:8.3f} {r['maha2_std']:8.3f}")
-
-    print(f"\n  Target d² ~ χ²({d}): mean = {d:.1f}, std = {jnp.sqrt(2*d):.3f}")
+        print(f"{name:<20} {r['hpd_mean']:9.3f} {r['hpd_std']:9.3f}"
+              f" {r['hpd_ks']:9.3f}")
 
 
 def _save_latent_results(problem, results, y_star, output_dir):

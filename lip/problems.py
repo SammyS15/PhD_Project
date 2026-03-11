@@ -255,6 +255,40 @@ class NonlinearDecoder2D:
             lambda y: self.posterior_mean_cov(y, grid_range=grid_range, grid_size=grid_size)
         )(y_batch)
 
+    def hpd_level(self, z, y, *, grid_range=4.0, grid_size=200):
+        """HPD credibility level of z under p(z|y).
+
+        Returns α ∈ [0, 1]: the fraction of posterior mass in regions with
+        density ≥ p(z|y). If z is a typical posterior sample, α ~ Uniform(0,1).
+
+        - α ≈ 0 means z is at the mode (highest density region)
+        - α ≈ 1 means z is in the far tails
+
+        z: shape (..., 2), y: shape (..., 3). Broadcasts over batch dims.
+        """
+        def _hpd_single(z_i, y_i):
+            _, _, _, _, p_grid, dz = self.posterior_grid(
+                y_i, grid_range=grid_range, grid_size=grid_size
+            )
+            # Density at the sample point (evaluate directly, not interpolated)
+            log_p_z = self.log_posterior(z_i, y_i)
+            # We need this on the same scale as p_grid. Recompute normalization.
+            z1 = jnp.linspace(-grid_range, grid_range, grid_size)
+            z2 = jnp.linspace(-grid_range, grid_range, grid_size)
+            Z1, Z2 = jnp.meshgrid(z1, z2)
+            z_grid = jnp.stack([Z1.ravel(), Z2.ravel()], axis=-1)
+            log_p_grid = self.log_posterior(z_grid, y_i)
+            log_norm = jax.scipy.special.logsumexp(log_p_grid) + jnp.log(dz)
+            p_at_z = jnp.exp(log_p_z - log_norm)
+            # Fraction of mass with density >= p_at_z
+            alpha = jnp.sum(p_grid[p_grid >= p_at_z]) * dz
+            return alpha
+
+        # Handle both single and batch inputs
+        if z.ndim == 1:
+            return _hpd_single(z, y)
+        return jax.vmap(_hpd_single)(z, y)
+
     def plot(self, solver_samples, y_star, title, ax=None, _grid_cache=None):
         """2D scatter of solver samples overlaid on posterior contours.
 
