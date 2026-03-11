@@ -1,1 +1,7 @@
 iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
+0	2026-03-11	baseline	Latent LATINO	NonlinearDecoder2D	0.5	0.435	0.139	-	BASELINE	under-dispersed
+0	2026-03-11	baseline	Latent DPS	NonlinearDecoder2D	0.5	0.381	0.191	-	BASELINE	under-dispersed
+0	2026-03-11	baseline	Latent LATINO	FoldedDecoder2D	1.0	0.741	0.431	-	BASELINE	over-dispersed, one mode
+0	2026-03-11	baseline	Latent DPS	FoldedDecoder2D	1.0	0.256	0.353	-	BASELINE	under-dispersed
+1	2026-03-11	H1: Latent MMPS	Latent MMPS	NonlinearDecoder2D	0.5	0.569	0.141	-	BETTER	slightly over-dispersed, big improvement over DPS
+1	2026-03-11	H1: Latent MMPS	Latent MMPS	FoldedDecoder2D	1.0	0.539	0.073	-	BETTER	near-calibrated! KS=0.073 meets success criterion

@@ -5,6 +5,7 @@ from .latino_sde import latino_sde
 from .lflow import lflow
 from .latent_dps import latent_dps
 from .latent_latino import latent_latino
+from .latent_mmps import latent_mmps
 
 ALL = {
     "LATINO": latino,
@@ -17,4 +18,5 @@ ALL = {
 LATENT_ALL = {
     "Latent LATINO": latent_latino,
     "Latent DPS": latent_dps,
+    "Latent MMPS": latent_mmps,
 }
