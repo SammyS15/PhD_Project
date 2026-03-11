@@ -24,3 +24,5 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 7	2026-03-11	H4: Split Gibbs	Split Gibbs	FoldedDecoder2D	1.0	0.258	0.555	-	WORSE	trapped in one mode
 8	2026-03-11	H5: SMC	MMPS-SMC (5p)	NonlinearDecoder2D	0.5	0.353	0.258	-	WORSE	importance resampling collapses diversity
 8	2026-03-11	H5: SMC	MMPS-SMC (5p)	FoldedDecoder2D	1.0	0.332	0.274	-	WORSE	SIR without rejuvenation kills calibration
+9	2026-03-11	H10: ULA oracle	Annealed ULA	NonlinearDecoder2D	0.5	0.537	0.097	-	SAME	oracle reference, n=100
+9	2026-03-11	H10: ULA oracle	Annealed ULA	FoldedDecoder2D	1.0	0.571	0.125	-	SAME	needs more steps for bimodal

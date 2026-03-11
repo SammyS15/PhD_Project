@@ -1,7 +1,6 @@
-"""Experiment: H5 — Few-particle SMC on top of Latent MMPS.
+"""Experiment: H10 — Annealed ULA on exact log-posterior (oracle).
 
-Run N_particles parallel MMPS trajectories per observation,
-weight by p(y|D(z)), select one. Corrects Tweedie approximation error.
+Simpler than MALA (no MH step), faster. Use as oracle reference.
 """
 
 import jax
@@ -9,60 +8,49 @@ import jax.numpy as jnp
 from functools import partial
 from lip import NonlinearDecoder2D, FoldedDecoder2D
 from lip.metrics import latent_calibration_test
-from lip.solvers.latent_mmps import latent_mmps
 
 
-def latent_mmps_smc(problem, y, key, *, N_particles=5, **mmps_kw):
-    """Run N_particles MMPS trajectories, select one by importance weight.
+def annealed_ula(problem, y, key, *, n_steps=1000, eta=0.005,
+                  n_anneal=300, T_max=3.0):
+    """Annealed ULA on exact log-posterior (no MH correction)."""
+    key, subkey = jax.random.split(key)
+    z = jax.random.normal(subkey, (*y.shape[:-1], problem.d_latent))
 
-    y has shape (..., d_pixel). We run N_particles independent trajectories
-    and select one per observation.
-    """
-    keys = jax.random.split(key, N_particles + 1)
-    key_select = keys[0]
+    grad_fn = jax.grad(lambda z, y: problem.log_posterior(z, y))
 
-    # Run N_particles independent MMPS trajectories
-    # Each returns shape (..., d_latent)
-    z_particles = jnp.stack([
-        latent_mmps(problem, y, keys[i + 1], **mmps_kw)
-        for i in range(N_particles)
-    ], axis=0)  # (N_particles, ..., d_latent)
+    for i in range(n_steps):
+        if i < n_anneal:
+            T = T_max * (1 - i / n_anneal) + 1.0 * (i / n_anneal)
+        else:
+            T = 1.0
 
-    # Log-weights: log p(y|D(z)) + log p(z)
-    log_w = jnp.stack([
-        problem.log_likelihood(z_particles[i], y) + problem.log_prior(z_particles[i])
-        for i in range(N_particles)
-    ], axis=0)  # (N_particles, ...)
+        key, subkey = jax.random.split(key)
 
-    # Normalize and select per observation
-    log_w = log_w - jax.scipy.special.logsumexp(log_w, axis=0, keepdims=True)
+        if z.ndim == 1:
+            g = grad_fn(z, y)
+        else:
+            g = jax.vmap(grad_fn)(z, y)
 
-    # For each observation in batch, select one particle
-    # idx shape: (...)
-    batch_shape = y.shape[:-1]
-    if len(batch_shape) == 0:
-        idx = jax.random.categorical(key_select, log_w[:, None])
-        return z_particles[idx[0]]
-    else:
-        # Categorical per batch element
-        idx = jax.random.categorical(key_select, log_w.T)  # (batch,)
-        # Gather: z_particles[idx[b], b, :]
-        return z_particles[idx, jnp.arange(batch_shape[0])]
+        z = z + eta * g / T + jnp.sqrt(2 * eta / T) * jax.random.normal(subkey, z.shape)
+
+    return z
 
 
 if __name__ == "__main__":
     p1 = NonlinearDecoder2D(alpha=0.5)
     p2 = FoldedDecoder2D(alpha=1.0)
 
-    print("H5: Few-particle SMC with Latent MMPS proposals")
+    print("H10: Annealed ULA oracle (n_steps=1000)")
+    for name, p in [("NonlinearDecoder2D", p1), ("FoldedDecoder2D", p2)]:
+        r = latent_calibration_test(p, annealed_ula, jax.random.PRNGKey(0), n=100)
+        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
+        print(f"  {name}: hpd={r['hpd_mean']:.3f} KS={r['hpd_ks']:.3f} {ok}")
 
-    for np_ in [1, 2, 5, 10]:
-        if np_ == 1:
-            solver = partial(latent_mmps, zeta=1.1)
-        else:
-            solver = partial(latent_mmps_smc, N_particles=np_, zeta=1.1)
-        r1 = latent_calibration_test(p1, solver, jax.random.PRNGKey(0), n=200)
-        r2 = latent_calibration_test(p2, solver, jax.random.PRNGKey(0), n=200)
-        ok1 = "✓" if 0.45 <= r1['hpd_mean'] <= 0.55 and r1['hpd_ks'] < 0.10 else " "
-        ok2 = "✓" if 0.45 <= r2['hpd_mean'] <= 0.55 and r2['hpd_ks'] < 0.10 else " "
-        print(f"  {np_:2d} particles: NL hpd={r1['hpd_mean']:.3f} KS={r1['hpd_ks']:.3f} {ok1} F hpd={r2['hpd_mean']:.3f} KS={r2['hpd_ks']:.3f} {ok2}")
+    # Compare
+    from lip.solvers.latent_mmps import latent_mmps
+    solver = partial(latent_mmps, zeta=1.1)
+    print("\nLatent MMPS (zeta=1.1):")
+    for name, p in [("NonlinearDecoder2D", p1), ("FoldedDecoder2D", p2)]:
+        r = latent_calibration_test(p, solver, jax.random.PRNGKey(0), n=100)
+        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
+        print(f"  {name}: hpd={r['hpd_mean']:.3f} KS={r['hpd_ks']:.3f} {ok}")
