@@ -68,6 +68,20 @@
 - Closest: LD-SMC (Achituve, ICML 2025) — formal convergence but needs many particles
 - **Latent MMPS is novel**: the push-through identity + Tweedie covariance propagation through J_D is not in the literature
 
+## MNISTVAE Calibration Achieved (iters 18-20) — BREAKTHROUGH
+- **Oracle Langevin (ULA, N=3000, lr=5e-7)**: hpd=0.518, KS=0.079 at n=1000 ✓
+- Confirmed across 5 seeds at n=500: passes 4/5 times (KS range 0.074-0.142)
+- Grid sampler (gold standard) gives KS=0.015 — grid is essentially exact
+- MAP-Laplace: hpd=0.472, KS=0.109 — close but Gaussian approximation too tight
+- MALA (accept-reject): similar to ULA at this step size (acceptance rate ~100%)
+- MAP-initialized MALA: slightly under-dispersed (hpd~0.45), Newton MAP biases toward mode
+- Key insight: Oracle Langevin is PRACTICAL for VAE inverse problems — the exact log-posterior
+  p(z|y) ∝ N(y; D(z), σ_n²I) · N(z; 0, I) is always available when you have the decoder
+- All diffusion-based methods fail catastrophically (hpd > 0.9) — the posterior is too concentrated
+  (std ~0.015) for the diffusion framework to handle with N=200 steps
+- The fundamental issue: diffusion solvers are designed for the prior distribution (std=1.0) but
+  the posterior is 60× more concentrated. The noise schedule and step count cannot adapt.
+
 ## New Hypotheses (agent-generated)
 - H13b: Local nonlinearity measure for zeta auto-tuning
 - Write a paper on Latent MMPS

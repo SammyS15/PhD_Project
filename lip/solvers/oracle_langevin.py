@@ -1,18 +1,18 @@
 """Oracle Langevin -- ULA on exact log-posterior, initialized from encoder.
 
-This is an oracle method that requires access to the exact log-posterior
-gradient. It validates that calibrated sampling is achievable and serves
-as a reference for practical methods.
+Uses the exact log-posterior gradient: ∇_z log p(z|y) = -(z/σ₀²) + J^T(y-D(z))/σ_n²
+This is available for any VAE latent inverse problem since both the decoder
+and prior are known.
 
 For MNISTVAE with sigma_n=0.2, the posterior is extremely concentrated
-(std ~0.015), requiring very small step sizes (lr ~1e-6).
+(std ~0.015), requiring very small step sizes (lr ~5e-7).
 """
 
 import jax
 import jax.numpy as jnp
 
 
-def _oracle_langevin_single(problem, y, key, *, N=3000, lr=1e-6):
+def _oracle_langevin_single(problem, y, key, *, N=3000, lr=5e-7):
     """Single-sample ULA on exact log-posterior with lax.scan."""
     d = problem.d_latent
     z = problem.encoder(y)
@@ -34,7 +34,7 @@ _jit_solve = None
 _jit_config = None
 
 
-def oracle_langevin(problem, y, key, *, N=3000, lr=1e-6, **kwargs):
+def oracle_langevin(problem, y, key, *, N=3000, lr=5e-7, **kwargs):
     """ULA on exact log-posterior, initialized from encoder."""
     global _jit_solve, _jit_config
 

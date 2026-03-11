@@ -42,3 +42,7 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 17	2026-03-11	H1: grid fix+oracle	Oracle Precond ULA	MNISTVAE	-	0.501	0.105	-	BETTER	grid was broken (0.04 spacing vs 0.015 std). Fixed to adaptive fine grid. Oracle validates grid posterior.
 17	2026-03-11	H1: grid fix baseline	Latent MMPS	MNISTVAE	-	0.938	0.872	-	BASELINE	re-evaluated with fixed adaptive grid
 17	2026-03-11	H1: grid fix baseline	Latent DPS	MNISTVAE	-	0.931	0.912	-	BASELINE	re-evaluated with fixed adaptive grid
+18	2026-03-11	H1: lr tuning	Oracle Langevin (lr=5e-7)	MNISTVAE	-	0.518	0.079	88	BETTER	CALIBRATED at n=1000. ULA N=3000, lr=5e-7.
+18	2026-03-11	H1: lr tuning	MAP-Laplace	MNISTVAE	-	0.472	0.109	13	SAME	Near-calibrated, Gaussian approximation slightly too tight
+19	2026-03-11	H1: MALA	MALA (lr=5e-7)	MNISTVAE	-	0.518	0.080	111	SAME	Similar to ULA, acceptance rate ~100% at this lr
+20	2026-03-11	grid floor	Grid Sampler	MNISTVAE	-	0.498	0.015	55	BASELINE	Gold standard, confirms grid is accurate
