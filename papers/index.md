@@ -10,3 +10,4 @@
 | askari2025 | 2025 | LFlow: flow matching posterior velocity; exact for Gaussian |
 | gupta2024 | 2024 | Diffusion posterior sampling is super-polynomial worst-case |
 | rao2025 | 2025 | Decoder Jacobian singular values create anisotropic latent dims |
+| stsl2024 | 2024 | Second-order Tweedie in latent space; reconstruction focus, no calibration |
