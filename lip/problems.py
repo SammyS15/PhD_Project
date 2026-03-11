@@ -284,3 +284,70 @@ class NonlinearDecoder2D:
         ax.legend(fontsize=8)
 
         return ax
+
+
+@dataclass
+class FoldedDecoder2D(NonlinearDecoder2D):
+    """2D Gaussian latent prior with a FOLDING decoder that creates bimodal posteriors.
+
+    Prior: z ~ N(0, I_2)
+    Decoder: D(z) = [z1² - z2², 2·z1·z2, α·(z1² + z2²)]
+    Forward model: y = D(z) + n, n ~ N(0, σ_n² I)
+
+    This is the complex squaring map: if w = z1 + i·z2, the first two
+    components are Re(w²) and Im(w²). Since w² = (-w)², we have
+    D(z) = D(-z) — the encoder is two-to-one, guaranteeing a bimodal
+    posterior in latent space for any observation.
+
+    α controls how much norm information leaks through the third channel.
+    """
+
+    alpha: float = 1.0
+    beta: float = 0.0  # unused, kept for dataclass compatibility
+
+    def decoder(self, z):
+        """Folding decoder D: ℝ² → ℝ³.  D(z) = D(-z)."""
+        z1, z2 = z[..., 0], z[..., 1]
+        return jnp.stack([
+            z1**2 - z2**2,
+            2 * z1 * z2,
+            self.alpha * (z1**2 + z2**2),
+        ], axis=-1)
+
+    def decoder_jacobian(self, z):
+        """Analytic Jacobian J_D(z), shape (..., 3, 2)."""
+        z1, z2 = z[..., 0], z[..., 1]
+        return jnp.stack([
+            jnp.stack([2 * z1, -2 * z2], axis=-1),
+            jnp.stack([2 * z2, 2 * z1], axis=-1),
+            jnp.stack([2 * self.alpha * z1, 2 * self.alpha * z2], axis=-1),
+        ], axis=-2)
+
+    def encoder(self, x, *, n_iter=10):
+        """Least-squares encoder via complex square root + Gauss-Newton.
+
+        The first two pixel components are Re(w²), Im(w²) where w = z1+iz2,
+        so the initial guess is w = √(x0 + i·x1) computed via polar form.
+        Gauss-Newton then refines. Always picks one of the two roots
+        (the one with positive real part), mirroring how a real VAE encoder
+        picks a single mode.
+        """
+        # Complex square root: w² = x0 + i*x1 → w = r^(1/2) e^(iθ/2)
+        r = jnp.sqrt(x[..., 0]**2 + x[..., 1]**2)
+        r_sqrt = jnp.sqrt(jnp.maximum(r, 1e-8))
+        theta_half = jnp.arctan2(x[..., 1], x[..., 0]) / 2
+        z0 = jnp.stack([r_sqrt * jnp.cos(theta_half),
+                         r_sqrt * jnp.sin(theta_half)], axis=-1)
+
+        def step(z, _):
+            residual = x - self.decoder(z)
+            J = self.decoder_jacobian(z)
+            JTJ = jnp.einsum('...pi,...pj->...ij', J, J)
+            JTr = jnp.einsum('...pi,...p->...i', J, residual)
+            # Damped step: regularize JTJ since it's singular at z=0
+            JTJ = JTJ + 1e-6 * jnp.eye(self.d_latent)
+            dz = jnp.linalg.solve(JTJ, JTr[..., None])[..., 0]
+            return z + dz, None
+
+        z_final, _ = jax.lax.scan(step, z0, None, length=n_iter)
+        return z_final
