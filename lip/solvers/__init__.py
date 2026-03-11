@@ -9,6 +9,8 @@ from .latent_mmps import latent_mmps
 from .latent_lflow import latent_lflow
 from .latent_latino_sde import latent_latino_sde
 from .latent_split_gibbs import latent_split_gibbs
+from .oracle_langevin import oracle_langevin
+from .map_laplace import map_laplace
 
 ALL = {
     "LATINO": latino,
@@ -25,4 +27,6 @@ LATENT_ALL = {
     "Latent LFlow": latent_lflow,
     "Latent LATINO+SDE": latent_latino_sde,
     "Latent Split Gibbs": latent_split_gibbs,
+    "Oracle Langevin": oracle_langevin,
+    "MAP-Laplace": map_laplace,
 }
