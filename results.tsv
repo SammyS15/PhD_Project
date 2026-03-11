@@ -12,3 +12,6 @@ iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
 3	2026-03-11	H8: phase diagram	Latent MMPS (z=1.1)	NonlinearDecoder2D	0.7	0.545	0.091	-	BETTER	calibrated, borderline
 3	2026-03-11	H8: phase diagram	Latent MMPS (z=1.1)	NonlinearDecoder2D	1.0	0.562	0.103	-	WORSE	slightly outside criteria
 3	2026-03-11	H8: phase diagram	Latent MMPS (z=1.1)	NonlinearDecoder2D	1.5	0.575	0.109	-	WORSE	over-dispersed at high alpha
+4	2026-03-11	H12: adaptive zeta	Latent MMPS (z=1.3)	NonlinearDecoder2D	1.0	0.501	0.039	-	BETTER	calibrated with higher zeta!
+4	2026-03-11	H12: adaptive zeta	Latent MMPS (z=1.4)	NonlinearDecoder2D	1.5	0.489	0.068	-	BETTER	calibrated even at alpha=1.5!
+4	2026-03-11	H12: adaptive zeta	Latent MMPS (z=1.1)	FoldedDecoder2D	1.0	0.489	0.033	-	BETTER	best FoldedDecoder2D result

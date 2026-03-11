@@ -1,30 +1,49 @@
-"""Experiment: H8 — Phase diagram: sweep alpha on NonlinearDecoder2D.
+"""Experiment: H12 — Adaptive zeta: find optimal zeta for each alpha.
 
-At what nonlinearity does Latent MMPS break? Also compare DPS and LATINO.
+Higher alpha needs higher zeta to compensate for decoder nonlinearity.
+Can we find a simple zeta(alpha) rule?
 """
 
 import jax
 import jax.numpy as jnp
 from functools import partial
-from lip import NonlinearDecoder2D
+from lip import NonlinearDecoder2D, FoldedDecoder2D
 from lip.metrics import latent_calibration_test
 from lip.solvers.latent_mmps import latent_mmps
-from lip.solvers.latent_dps import latent_dps
-from lip.solvers.latent_latino import latent_latino
 
 
 if __name__ == "__main__":
-    print("Phase diagram: NonlinearDecoder2D, alpha sweep")
-    print(f"{'alpha':>6} | {'MMPS hpd':>8} {'MMPS ks':>7} | {'DPS hpd':>8} {'DPS ks':>7} | {'LAT hpd':>8} {'LAT ks':>7}")
-    print("-" * 75)
+    print("Optimal zeta search per alpha — NonlinearDecoder2D")
+    print(f"{'alpha':>6} | {'best_zeta':>9} | {'hpd_mean':>8} | {'hpd_ks':>6}")
+    print("-" * 45)
 
-    solver_mmps = partial(latent_mmps, zeta=1.1)
-
+    best_results = {}
     for alpha in [0.0, 0.2, 0.5, 0.7, 1.0, 1.5]:
         problem = NonlinearDecoder2D(alpha=alpha)
-        r_mmps = latent_calibration_test(problem, solver_mmps, jax.random.PRNGKey(0), n=200)
-        r_dps = latent_calibration_test(problem, latent_dps, jax.random.PRNGKey(0), n=200)
-        r_lat = latent_calibration_test(problem, latent_latino, jax.random.PRNGKey(0), n=200)
+        best_zeta, best_dist = 1.0, 999
+        best_r = None
+        for zeta in [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 2.0]:
+            solver = partial(latent_mmps, zeta=zeta)
+            r = latent_calibration_test(problem, solver, jax.random.PRNGKey(0), n=200)
+            dist = abs(r['hpd_mean'] - 0.5)
+            if dist < best_dist:
+                best_dist = dist
+                best_zeta = zeta
+                best_r = r
+        ok = "✓" if 0.45 <= best_r['hpd_mean'] <= 0.55 and best_r['hpd_ks'] < 0.10 else " "
+        print(f"{alpha:6.1f} | {best_zeta:9.1f} | {best_r['hpd_mean']:8.3f} | {best_r['hpd_ks']:6.3f} {ok}")
+        best_results[alpha] = best_zeta
 
-        m_ok = "✓" if 0.45 <= r_mmps['hpd_mean'] <= 0.55 and r_mmps['hpd_ks'] < 0.10 else " "
-        print(f"{alpha:6.1f} | {r_mmps['hpd_mean']:8.3f} {r_mmps['hpd_ks']:7.3f} {m_ok}| {r_dps['hpd_mean']:8.3f} {r_dps['hpd_ks']:7.3f} | {r_lat['hpd_mean']:8.3f} {r_lat['hpd_ks']:7.3f}")
+    # Check if linear fit zeta = 1.0 + c*alpha works
+    alphas = list(best_results.keys())
+    zetas = list(best_results.values())
+    print(f"\nOptimal zetas: {dict(zip(alphas, zetas))}")
+
+    # Test the best fixed zeta on FoldedDecoder2D
+    print("\nFoldedDecoder2D check with various zeta:")
+    problem2 = FoldedDecoder2D(alpha=1.0)
+    for zeta in [1.0, 1.1, 1.2, 1.3]:
+        solver = partial(latent_mmps, zeta=zeta)
+        r = latent_calibration_test(problem2, solver, jax.random.PRNGKey(0), n=200)
+        ok = "✓" if 0.45 <= r['hpd_mean'] <= 0.55 and r['hpd_ks'] < 0.10 else " "
+        print(f"  zeta={zeta:.1f}: hpd_mean={r['hpd_mean']:.3f}, KS={r['hpd_ks']:.3f} {ok}")
