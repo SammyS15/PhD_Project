@@ -7,77 +7,62 @@ You are an autonomous research agent. Read this file completely before every ite
 ## 1. Project Structure
 
 ```
-lip/                    — JAX library (pip install -e .)
-  problems.py           — Gaussian1D, NonlinearDecoder2D, FoldedDecoder2D, MNISTVAE
-  vae.py                — Pure-JAX VAE forward pass (encoder/decoder) with weight loading
-  data/                 — Pretrained VAE weights (vae_mnist_d2.npz, vae_mnist_d20.npz)
-  metrics.py            — calibration_test, latent_calibration_test, benchmark, latent_benchmark
-  solvers/              — one file per solver
-    latino.py, dps.py, mmps.py, latino_sde.py, lflow.py          (pixel-space)
-    latent_latino.py, latent_dps.py, _latent_proximal.py          (latent-space)
-scripts/
-  run_mnist_vae.py      — MNISTVAE benchmark (all latent solvers)
-  run_gaussian.py       — 1D Gaussian benchmark (reference only)
-  run_nonlinear.py      — 2D toy latent benchmarks (reference only)
-experiment.py           — THE SINGLE FILE YOU ITERATE ON (create new solvers here first)
-program.md              — this file (HUMAN EDITS ONLY — never modify)
-report.md               — literature survey (31 papers, seed knowledge)
-results.tsv             — your experiment log (append-only, tab-separated)
-papers/                 — your knowledge base of paper summaries (you write these)
-  index.md              — paper index: one line per paper with key finding
-  *.md                  — one file per paper, structured summary
+lip/                    -- JAX library (pip install -e .)
+  problems.py           -- MNISTVAE problem definition
+  vae.py                -- Pure-JAX VAE forward pass (encoder/decoder)
+  data/                 -- Pretrained VAE weights (vae_mnist_d2.npz, vae_mnist_d20.npz)
+  metrics.py            -- latent_calibration_test, latent_benchmark
+  solvers/              -- one file per solver
+    oracle_langevin.py  -- ULA on exact log-posterior (reference)
+    latent_latino.py    -- LATINO encode-denoise-decode-proximal
+experiment.py           -- THE SINGLE FILE YOU ITERATE ON (create new solvers here first)
+program.md              -- this file (HUMAN EDITS ONLY -- never modify)
+report.md               -- literature survey (31 papers, seed knowledge)
+results.tsv             -- your experiment log (append-only, tab-separated)
+papers/                 -- your knowledge base of paper summaries (you write these)
+  index.md              -- paper index: one line per paper with key finding
+  *.md                  -- one file per paper, structured summary
 results/
-  insights.md           — running list of discoveries, open questions, new hypotheses
-  scoreboard.md         — current best result per method
-figures/                — saved plots
+  insights.md           -- running list of discoveries, open questions, new hypotheses
+  scoreboard.md         -- current best result per method
+archive/                -- previous experiments (1D Gaussian, 2D toy problems, old solvers)
 ```
 
-**What you CAN modify:** `experiment.py`, new files in `lip/solvers/`, `results.tsv`, `papers/`, `results/`, `figures/`.
+**What you CAN modify:** `experiment.py`, new files in `lip/solvers/`, `results.tsv`, `papers/`, `results/`.
 **What you CANNOT modify:** `program.md`, `report.md`
 **What you CAN modify with caution:** `lip/problems.py`, `lip/metrics.py`, `lip/solvers/__init__.py` (to register new solvers), `scripts/run_mnist_vae.py` (to add new solvers to benchmarks).
 
 ---
 
-## 2. The Existing Codebase
+## 2. The Problem: MNISTVAE
 
-Before writing any code, understand what's already built:
+| Property | Value |
+|----------|-------|
+| Problem | `MNISTVAE(latent_dim=2, sigma_n=0.2)` |
+| Decoder | Pretrained MLP VAE `D: R^2 -> [0,1]^784` (28x28 images) |
+| Observation model | `y = D(z*) + sigma_n * eps` |
+| Ground truth | Grid-exact posterior (adaptive fine grid centered on MAP) |
+| Posterior std | ~0.015 (extremely concentrated vs prior std=1.0) |
+| Score function | **Exact analytic**: `grad log p_t(z) = -z / (sigma_0^2 + sigma_t^2)` at all noise levels |
 
-### Target Problem: MNISTVAE
+The Gaussian prior is a deliberate choice: it gives the **exact score** at every noise level (no trained score network). Any calibration failure is purely due to the solver, not score estimation error.
 
-| Problem | Decoder | Posterior | Difficulty |
-|---------|---------|-----------|------------|
-| `MNISTVAE(latent_dim=2, sigma_n=0.2)` | Pretrained MLP VAE `D: ℝ²→[0,1]^784` (28×28 images) | Grid-exact (d_latent=2) | Realistic neural network decoder, large Jacobian norms |
+The MNISTVAE problem provides: `decoder`, `decoder_jacobian` (via `jax.jacfwd`), `encoder` (VAE encoder), `score` (exact for N(0,I) prior), `denoise` (Tweedie, deterministic or stochastic), `tweedie_cov`, `log_posterior`, `posterior_grid`, `posterior_mean_cov`, `hpd_level`.
 
-**Observation model:** `y = D(z*) + σ_n · ε`, with `σ_n=0.2` (per-pixel SNR ≈ 1, digits visible but noisy).
+### Existing Solvers
 
-**Ground truth latent:** `z* = [0.8, -0.5]` (produces a digit "8").
+| Solver | HPD mean (target 0.5) | KS stat (target 0) | Status |
+|--------|:---:|:---:|--------|
+| Oracle Langevin | 0.518 | 0.079 | Calibrated (ULA, N=3000, lr=5e-7) |
+| Latent LATINO | 0.998 | 0.982 | Severely over-dispersed |
 
-The MNISTVAE problem provides: `decoder`, `decoder_jacobian` (via `jax.jacfwd`), `encoder` (Gauss-Newton), `score` (exact for N(0,I) prior), `denoise` (Tweedie, deterministic or stochastic), `tweedie_cov`, `log_posterior`, `posterior_grid`, `posterior_mean_cov`, `hpd_level`.
-
-**Reference problems (already solved, for context only):**
-- `Gaussian1D` — Pixel-space baseline, analytic posterior. MMPS achieves z_std=1.002 (calibrated).
-- `NonlinearDecoder2D` / `FoldedDecoder2D` — Toy 2D latent problems with analytic decoders.
-
-### Existing Solvers on MNISTVAE (lip/solvers/)
-
-All latent solvers are benchmarked on `MNISTVAE(latent_dim=2, sigma_n=0.2)`:
-
-| Solver | HPD mean (target 0.5) | KS stat (target → 0) | Key issue |
-|--------|----------------------|----------------------|-----------|
-| Latent LATINO | 1.000 | 0.997 | Severely over-dispersed, proximal + encoder round-trip breaks |
-| Latent DPS | 0.966 | 0.937 | Over-dispersed, guidance scaling insufficient |
-| Latent MMPS | 0.926 | 0.843 | Over-dispersed, Tweedie linearization breaks on neural decoder |
-| Latent LFlow | 0.977 | 0.920 | Over-dispersed, ODE discretization error |
-| Latent LATINO+SDE | 0.998 | 0.987 | Severely over-dispersed |
-| Latent Split Gibbs | 1.000 | 0.997 | Severely over-dispersed |
-
-**No method achieves calibrated posteriors.** All are heavily over-dispersed (HPD mean >> 0.5), meaning solver samples land far from the true posterior mass. The diagnostic plots show samples scattered across latent space (z range ±40) while the true posterior is tightly concentrated.
+**Oracle Langevin validates the grid posterior and proves calibrated sampling is achievable**, but it bypasses the diffusion framework entirely -- it's direct MCMC on `grad log p(z|y)` at noise level 0, with no score function `grad log p_t(z)` involved. The challenge is to achieve similar calibration using a **diffusion-based** approach that operates through the score function at various noise levels, combined with likelihood guidance.
 
 ### Metrics (lip/metrics.py)
 
-**Latent-space:** `latent_calibration_test(problem, solver, key)` → `hpd_mean` (target: 0.500), `hpd_ks` (target: → 0)
+`latent_calibration_test(problem, solver, key)` -> `hpd_mean` (target: 0.500), `hpd_ks` (target: close to 0)
 
-Use `lip.latent_benchmark(problem)` or `python scripts/run_mnist_vae.py` to run all registered solvers. Output includes per-solver diagnostic plots with decoded image panels (ground truth, observation, posterior samples).
+Use `lip.latent_benchmark(problem)` or `python scripts/run_mnist_vae.py` to run all registered solvers.
 
 ### How to add a new solver
 
@@ -87,7 +72,7 @@ import jax
 import jax.numpy as jnp
 
 def my_method(problem, y, key, *, N=200, **kwargs):
-    """Signature must be (problem, y, key, **kwargs) -> samples."""
+    """Signature must be (problem, y, key, **kwargs) -> z samples."""
     # Return z with shape (..., problem.d_latent)
     ...
     return z
@@ -96,7 +81,7 @@ def my_method(problem, y, key, *, N=200, **kwargs):
 Then register in `lip/solvers/__init__.py`:
 ```python
 from .my_method import my_method
-LATENT_ALL["My Method"] = my_method
+SOLVERS["My Method"] = my_method
 ```
 
 ### Quick test pattern
@@ -104,7 +89,7 @@ LATENT_ALL["My Method"] = my_method
 ```python
 # In experiment.py
 from lip import MNISTVAE
-from lip.metrics import latent_calibration_test, latent_posterior_test
+from lip.metrics import latent_calibration_test
 import jax
 
 problem = MNISTVAE(latent_dim=2, sigma_n=0.2)
@@ -112,11 +97,37 @@ result = latent_calibration_test(problem, my_solver, jax.random.PRNGKey(0), n=20
 print(f"HPD mean: {result['hpd_mean']:.3f} (target: 0.500)")
 ```
 
-**Note on MNISTVAE:** The decoder Jacobian has large norms (~10-50). DPS-style guidance scaling (zeta) typically needs significant reduction (~0.01-0.5 vs 1.0 on toy problems). The decoder output is in [0,1]^784 (sigmoid activation).
+---
+
+## 3. What We've Learned (from previous experiments in archive/)
+
+These findings come from 20 iterations of experiments on toy problems (NonlinearDecoder2D, FoldedDecoder2D) and MNISTVAE. See `archive/results/` for full details.
+
+### Critical findings:
+1. **Toy problems are misleading**: Methods that achieve calibration on NonlinearDecoder2D and FoldedDecoder2D (e.g., Latent MMPS) fail catastrophically on MNISTVAE.
+2. **The posterior is 60x more concentrated than the prior**: std ~0.015 vs std=1.0. Diffusion-based methods with N=200 steps cannot adapt their noise schedule to this concentration.
+3. **All diffusion solvers produce samples spanning z in [-40, 40]** while the true posterior is at +/-0.03 from the mode. The guidance/correction is orders of magnitude too weak.
+4. **Oracle Langevin works** (hpd=0.518, KS=0.079): ULA with exact gradients and very small step size (lr=5e-7) achieves calibration. This proves the target is reachable.
+5. **Grid posterior is accurate**: Grid sampler achieves KS=0.015 at n=1000 (gold standard).
+6. **MALA = ULA** at this step size: acceptance rate is ~100%, so Metropolis correction adds nothing.
+7. **MAP-Laplace is close** (hpd=0.472, KS=0.109): Gaussian approximation around the MAP is slightly too tight but nearly calibrated.
+
+### What failed on MNISTVAE:
+- Latent MMPS (hpd=0.938): Tweedie covariance propagation breaks when posterior is 60x tighter than prior
+- Latent DPS (hpd=0.931): guidance too weak even with Jacobian
+- Latent LFlow (hpd=0.957): ODE discretization error
+- Latent Split Gibbs (hpd=0.990): Langevin steps too large
+- Latent LATINO (hpd=0.998): encode-decode round-trip breaks completely
+- Latent LATINO+SDE (hpd=0.995): SDE denoiser makes it worse
+
+### What worked on toy problems (but not MNISTVAE):
+- **Latent MMPS** with zeta=1.1: calibrated on NonlinearDecoder2D (hpd=0.501, KS=0.032) and FoldedDecoder2D (hpd=0.482, KS=0.059). The Tweedie covariance propagation through the decoder Jacobian is correct in principle.
+- **Adaptive zeta ~ 1.0 + 0.2*alpha** works across nonlinearity levels
+- N=100 diffusion steps is sufficient (robust to step count)
 
 ---
 
-## 3. The Loop (one iteration = one experiment)
+## 4. The Loop (one iteration = one experiment)
 
 Every iteration, do exactly this:
 
@@ -126,63 +137,31 @@ Every iteration, do exactly this:
 - Read `results/insights.md` (what you've learned so far)
 - Read `papers/index.md` (what you know from the literature)
 
-### Step 2: Think — what should I try next?
+### Step 2: Think -- what should I try next?
 Based on everything you've read, decide:
-- **If a clear next experiment follows from recent results** → do it
-- **If you're stuck or a new direction seems promising** → go to Step 2b (literature search)
-- **If the last experiment failed due to a bug** → fix and retry (max 3 retries per idea)
-- **If you've exhausted the current line of inquiry** → pick the next seed hypothesis from Section 6, or propose a new one based on what you've learned
+- **If a clear next experiment follows from recent results** -> do it
+- **If you're stuck or a new direction seems promising** -> go to Step 2b (literature search)
+- **If the last experiment failed due to a bug** -> fix and retry (max 3 retries per idea)
+- **If you've exhausted the current line of inquiry** -> pick the next seed hypothesis from Section 6, or propose a new one
 
 Write your reasoning in a brief `## Thinking` block at the top of the git commit message.
 
 ### Step 2b: Literature search (when needed)
-Use web search or the ADS API to find relevant papers. When you find a useful paper:
+Use web search to find relevant papers. When you find a useful paper:
 
-1. **Create `papers/{shortname}.md`** with this exact structure:
-```markdown
-# {Title}
-**Authors:** {authors}
-**Year:** {year} | **Venue:** {venue}
-**Link:** {arxiv url}
-
-## Key idea (1-2 sentences)
-
-## Method summary (≤10 lines)
-{Focus on the math/algorithm, not the narrative.}
-
-## Relevance to our problem
-{Why does this matter for calibrated latent posterior sampling?}
-
-## Key equations
-{The 2-3 most important equations, in LaTeX}
-
-## Limitations noted by authors
-
-## Experimental takeaway
-{Key numbers if available.}
-```
-
-2. **Update `papers/index.md`** — append one line:
-```
-{shortname} | {year} | {key finding in <15 words}
-```
+1. **Create `papers/{shortname}.md`** with structured summary (key idea, method, relevance, equations, limitations)
+2. **Update `papers/index.md`** -- append one line: `{shortname} | {year} | {key finding in <15 words}`
 
 **When to search:**
 - Before implementing a method you haven't implemented before
-- When an experiment produces a surprising result (good or bad)
-- When you've been stuck for 3+ iterations on the same idea
-- When you want to check if someone has already tried your idea
-- Every 5-7 iterations, do a broad scan for recent papers (2025-2026) on "diffusion posterior sampling calibration" or "latent inverse problems"
-
-**When NOT to search:**
-- When you have a clear next experiment from the last result
-- When you're debugging a crash
-- Don't read more than 2 papers per iteration — this is a research loop, not a literature review
+- When an experiment produces a surprising result
+- When you've been stuck for 3+ iterations
+- Every 5-7 iterations, scan for recent papers on "diffusion posterior sampling calibration" or "latent inverse problems"
 
 ### Step 3: Implement
-- **Prototype first in `experiment.py`** — quick and dirty, test the idea
+- **Prototype first in `experiment.py`** -- quick and dirty, test the idea
 - **If it works, promote to `lip/solvers/{method}.py`** and register in `__init__.py`
-- Keep `experiment.py` under 400 lines. It's a scratch pad, not an archive.
+- Keep `experiment.py` under 400 lines.
 
 ### Step 4: Run
 ```bash
@@ -190,7 +169,7 @@ python experiment.py
 ```
 Must complete in under 2 minutes. If longer, reduce `n` or simplify.
 
-For full benchmarks against all existing solvers:
+For full benchmarks:
 ```bash
 python scripts/run_mnist_vae.py
 ```
@@ -198,153 +177,111 @@ python scripts/run_mnist_vae.py
 ### Step 5: Record
 **Append one row to `results.tsv`:**
 ```
-iter	date	hypothesis	method	problem	alpha	hpd_mean	hpd_ks	time_s	verdict	notes
+iter	date	hypothesis	method	problem	hpd_mean	hpd_ks	time_s	verdict	notes
 ```
 - `verdict`: BETTER / WORSE / SAME / BUG / BASELINE
-- For pixel-space experiments, use `z_std` instead of `hpd_mean`
 
-**Update `results/scoreboard.md`** if this is a new best for any (method, problem) pair.
+**Update `results/scoreboard.md`** if this is a new best for any method.
 
 ### Step 6: Keep or discard (the ratchet)
 - **If hpd_mean improved** (closer to 0.500) or **hpd_ks decreased**: `git add -A && git commit -m "H{N}: {one-line result}"`
 - **If worse or crashed**: `git checkout -- experiment.py lip/solvers/` (revert), still log in results.tsv
-- **New method that works at all**: commit as a new baseline even if not best
-- **After committing a new solver or improvement**: run `python scripts/run_mnist_vae.py` to benchmark against all existing solvers and update the scoreboard
+- **New method that works**: commit as a new baseline even if not best
 
 ### Performance monitoring
-- **Check GPU utilization** with `nvidia-smi` when running experiments. If GPU usage is low (<30%), something is wrong:
-  - Python for-loops over samples instead of vectorized JAX operations (use `jax.vmap` or `jax.lax.scan`)
-  - Frequent Python-level iteration instead of compiled XLA kernels
-  - Small batch sizes that don't saturate the GPU
-- **Use `jax.lax.scan`** for iterative algorithms (Langevin, diffusion steps) instead of Python for-loops
-- **Use `jax.vmap`** to vectorize over independent samples when possible
+- **Use `jax.lax.scan`** for iterative algorithms instead of Python for-loops
+- **Use `jax.vmap`** to vectorize over independent samples
 - **Target**: calibration tests with n=200 should complete in under 2 minutes
 
 ---
 
-## 4. Metrics
+## 5. Metrics
 
-**Latent-space primary metric: `hpd_mean`** — mean HPD credibility level of solver samples under the true grid posterior. Target: **0.500** (= Uniform(0,1)).
-- hpd_mean < 0.5 → samples cluster near mode (under-dispersed)
-- hpd_mean > 0.5 → samples in tails (over-dispersed)
+**Primary: `hpd_mean`** -- mean HPD credibility level. Target: **0.500**.
+- hpd_mean < 0.5: under-dispersed
+- hpd_mean > 0.5: over-dispersed
 
-**Secondary: `hpd_ks`** — KS statistic of HPD levels vs Uniform(0,1). Target: → 0.
+**Secondary: `hpd_ks`** -- KS statistic vs Uniform(0,1). Target: close to 0.
 
-**Reference (pixel-space) metric: `z_std`** — standard deviation of z-scores. Target: **1.000**. (Only relevant for Gaussian1D reference problem.)
-
-The true posterior is computed by grid evaluation in `problem.posterior_grid()` over a 200×200 grid on [-4, 4]². This is exact for d_latent=2. If Oracle MCMC disagrees with the grid, debug the grid first.
-
----
-
-## 5. Starting Point
-
-The baselines are already implemented and benchmarked on MNISTVAE. You do NOT need to reimplement them. Your job starts at improving upon them.
-
-Current state of affairs:
-- **All existing methods fail on MNISTVAE**: no method achieves hpd_mean ≈ 0.500 (all are > 0.9, severely over-dispersed)
-- **Best so far**: Latent MMPS (hpd_mean=0.926, KS=0.843) — still far from calibrated
-- **The gap**: The neural network decoder's large Jacobian norms and nonlinearity break all existing approximations. Tweedie linearization (MMPS/DPS), encoder round-trips (LATINO), and Langevin steps (Split Gibbs) all produce samples that scatter far from the true posterior.
-- **Key observation**: Solver samples span z ∈ [-40, 40] while the true posterior is concentrated near the origin. The methods need much tighter control of step sizes / guidance strength for neural decoders.
+The true posterior is computed by adaptive fine grid evaluation centered on the encoder MAP, with +/-0.2 range and 200x200 resolution (~8 grid points per posterior std).
 
 ---
 
 ## 6. Seed Hypotheses
 
-These are starting directions ordered by expected information gain. You will generate better hypotheses as you learn. All experiments target `MNISTVAE(latent_dim=2, sigma_n=0.2)`.
+All experiments target `MNISTVAE(latent_dim=2, sigma_n=0.2)`.
 
-**H1: Oracle Langevin on exact log-posterior.** Not a diffusion method — just run annealed MALA/ULA on `problem.log_posterior(z, y)` with decreasing temperature. This establishes whether calibrated sampling is achievable at all on MNISTVAE, and validates the grid posterior. Start here.
+**H1: Annealed Langevin with learned noise schedule.** Oracle Langevin works but uses a fixed lr. Try annealing the step size (warm-up then decay) to mix faster while maintaining calibration.
 
-**H2: Aggressive guidance scaling for DPS/MMPS.** Current solvers are over-dispersed with huge latent excursions (z ∈ [-40, 40]). Try much smaller guidance scale (zeta ≪ 1) and/or gradient clipping. The Jacobian norms of the neural decoder are ~10-50×, so guidance needs proportional dampening.
+**H2: Preconditioned Langevin.** The posterior has anisotropic curvature (Hessian from J^T J / sigma_n^2 + I / sigma_0^2). Use a local Gauss-Newton preconditioner to take larger effective steps. Fisher information matrix or its diagonal approximation.
 
-**H3: Latent MMPS + Jacobian-aware covariance scaling.** MMPS uses the Tweedie covariance which doesn't account for the decoder Jacobian conditioning. Scale the covariance correction by `(J^T J)^{-1}` or use a Gauss-Newton Hessian approximation for the likelihood term.
+**H3: Posterior-adapted diffusion.** The noise schedule sigma_max=2.0 was designed for the N(0,1) prior. The posterior has std~0.015. Try a much smaller sigma_max (~0.1) and fewer steps but adapted to the posterior scale. The diffusion should cover the posterior, not the prior.
 
-**H4: Few-particle SMC (LD-SMC style).** Run N=2,5,10 parallel reverse-SDE trajectories, weight by `p(y|D(ẑ₀))`, resample. Minimal change to Latent DPS — just add particles and weights. The resampling should concentrate particles near the true posterior.
+**H4: Two-phase approach.** Phase 1: find the MAP (or good initialization) via optimization. Phase 2: run calibrated MCMC from the MAP. MAP-Laplace nearly works (hpd=0.472) -- the Gaussian approximation is almost right. Can we do better with a few Langevin steps from the Laplace initialization?
 
-**H5: Split Gibbs with tuned Langevin step size.** The current Split Gibbs is severely over-dispersed. The Langevin likelihood step may need much smaller step size for the neural decoder. Sweep step size and number of inner Langevin steps.
+**H5: Tempered/annealed posterior.** Start with a broad posterior (high temperature / large sigma_n) and anneal to the true sigma_n. This bridges the gap between prior (broad) and posterior (tight) gradually, similar to simulated annealing.
 
-**H6: Latent LATINO with adaptive proximal strength.** LATINO's proximal step uses a fixed schedule. With a neural decoder, the proximal operator may need tighter coupling (larger δ_k) to prevent drift in pixel space.
+**H6: Latent MMPS with adapted noise schedule.** MMPS works on toy problems. The failure on MNISTVAE is due to the noise schedule not matching the posterior scale. If we reduce sigma_max from 2.0 to ~0.1 and increase the number of steps, the Tweedie approximation might become valid again.
 
-**H7: Direct MCMC baseline (HMC/NUTS).** Use NumPyro to run HMC/NUTS on the exact `log_posterior`. This gives a gold-standard posterior to compare against and reveals whether the grid posterior is correct.
+**H7: Decoder-linearized posterior.** Around the MAP z*, linearize: D(z) ~ D(z*) + J(z*)(z-z*). This gives a Gaussian posterior that can be sampled exactly. Compare to MAP-Laplace (which uses the same idea). The question is whether this linearization is accurate enough for the MNIST decoder.
 
-**H8: Noise schedule tuning.** The diffusion noise schedule (number of steps, min/max sigma) was tuned for toy problems. The neural decoder may need a different schedule — more steps, smaller sigma_max, or different spacing.
+**H8: Variational refinement.** Fit a normalizing flow or mixture of Gaussians to approximate the posterior, initialized from MAP-Laplace. Use the exact log-posterior for training signal (ELBO or reverse KL).
 
-**H9: Encoder-free methods.** LATINO relies on a Gauss-Newton encoder which may be inaccurate for the neural decoder. Methods that avoid the encoder entirely (DPS, Split Gibbs, SMC) may have an advantage if properly tuned.
+**H9: Stein variational gradient descent (SVGD).** Maintain a set of particles and update them with the posterior gradient + a repulsive kernel. No accept/reject needed, naturally calibrated in the particle limit.
 
-**H10: Sigma_n sensitivity sweep.** Run the best 2-3 methods across sigma_n ∈ [0.1, 0.2, 0.5, 1.0, 2.0] to map where calibration breaks down and understand the dependence on SNR.
+**H10: Neural posterior estimation.** Train a small network to amortize posterior sampling for this specific decoder. Input: y, output: z ~ p(z|y). Train on (z, y) pairs from the generative model.
 
 ---
 
 ## 7. Adaptive Research Direction
 
-As you accumulate results, you SHOULD propose new hypotheses. Write them in `results/insights.md`.
+As you accumulate results, propose new hypotheses in `results/insights.md`.
 
 **Signs you should pivot:**
-- Method reduces over-dispersion but plateaus at hpd_mean > 0.7 → fundamental approximation issue, try a different family of methods
-- Method works on toy NonlinearDecoder2D but fails on MNISTVAE → neural decoder Jacobian structure is the bottleneck
-- Method is calibrated but 100× slower → look for cost reduction
-- Unexpected method achieves hpd_mean≈0.5 → understand WHY, derive the math, this could be a paper
-- Oracle MCMC (H1/H7) fails to calibrate → grid posterior may be wrong, debug metrics first
+- Method reduces over-dispersion but plateaus at hpd_mean > 0.7: fundamental issue
+- Method works but is 100x slower than Oracle Langevin: look for cost reduction
+- Method achieves hpd_mean ~ 0.5: understand WHY, this could be a paper
 
 **Signs you should search literature:**
-- You've found a specific mathematical structure matters → search if studied
-- You've invented something that works → search if published
-- Stuck for 3+ iterations → search adjacent fields
+- Found a mathematical structure that matters: search if studied
+- Invented something that works: search if published
+- Stuck for 3+ iterations: search adjacent fields
 
-**Signs you should implement more methods from the litterature:**
-- If your solution becomes very good, make sure to implement SOTA algorithms from the litterature to compare to
+**Signs you should add a new test problem:**
+- Solution works very well and methods are hard to distinguish
+- Need to test scaling to higher dimensions (latent_dim=20)
 
-**Signs you should implement a new test**
-- If your solution becomes very good and that it's difficult to see any difference between methods, you may consider extending the 
-set of test problems. But keep in mind that test problems should be fast, and able to provide clear insights. Also compare SOTA on new problems.
-
-**Track the evolving program in `results/insights.md`:**
+**Track in `results/insights.md`:**
 ```markdown
-## Key Findings (numbered, one line each)
+## Key Findings
 1. ...
 
 ## Open Questions
 - ...
 
-## New Hypotheses (agent-generated)
+## New Hypotheses
 - H11: ...
 
-## Dead Ends (don't retry)
+## Dead Ends
 - Tried X, failed because Y (iteration N)
 ```
 
 ---
 
-## 8. Knowledge Base Management
+## 8. Knowledge Base
 
-`papers/` is your external memory across iterations.
+`papers/` is your external memory across iterations. Read `papers/index.md` every iteration.
 
-**papers/index.md** — quick-reference table you read every iteration:
-```markdown
-| shortname | year | key finding |
-|-----------|------|-------------|
-| rozet2024 | 2024 | MMPS exact for Gaussian; Tweedie covariance in likelihood |
-| chung2023 | 2023 | DPS is implicit MAP, not posterior sampling |
-| ...       |      |             |
-```
-
-**Seed from report.md in iteration 0** (don't fetch — info is already there):
-rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, gupta2024, rao2025
+Seed papers (already summarized from report.md):
+rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, gupta2024, rao2025, stsl2024
 
 ---
 
 ## 9. Completion
 
-Output `<promise>BREAKTHROUGH</promise>` if you achieve hpd_mean ∈ [0.45, 0.55] and hpd_ks < 0.1 on MNISTVAE(latent_dim=2, sigma_n=0.2) with cost ≤ 10× single-trajectory Latent DPS
+Output `<promise>BREAKTHROUGH</promise>` if you achieve hpd_mean in [0.45, 0.55] AND hpd_ks < 0.1 on MNISTVAE(latent_dim=2, sigma_n=0.2) with a **diffusion-based method** -- i.e., one that uses the score function `grad log p_t(z)` at various noise levels as its generative prior, combined with some form of likelihood guidance. Oracle Langevin bypasses the diffusion framework entirely (direct MCMC on the exact posterior) and does not count.
 
-Otherwise iterate until `--max-iterations`, then write `results/summary.md`:
-```markdown
-## Summary after N iterations
-### What worked
-### What didn't
-### Best method found (with numbers)
-### Most promising unexplored direction
-### Recommended next steps for the human
-```
+Otherwise iterate until `--max-iterations`, then write `results/summary.md`.
 
 ---
 

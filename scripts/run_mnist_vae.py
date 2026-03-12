@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 
 import lip
-from lip.solvers import LATENT_ALL
+from lip.solvers import SOLVERS
 
 
 def main():
@@ -43,9 +43,9 @@ def main():
 
     # Select solvers
     if args.solvers:
-        solvers = {k: v for k, v in LATENT_ALL.items() if k in args.solvers}
+        solvers = {k: v for k, v in SOLVERS.items() if k in args.solvers}
     else:
-        solvers = LATENT_ALL
+        solvers = SOLVERS
 
     if args.latent_dim == 2:
         # Use full latent benchmark with HPD calibration

@@ -1,3 +1,2 @@
-from .problems import Gaussian1D, NonlinearDecoder2D, FoldedDecoder2D, MNISTVAE
-from .metrics import benchmark, print_table, calibration_test, posterior_test
+from .problems import MNISTVAE
 from .metrics import latent_calibration_test, latent_posterior_test, latent_benchmark
