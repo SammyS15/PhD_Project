@@ -19,31 +19,30 @@ class MNISTVAE:
     Forward model: y = D(z) + n, n ~ N(0, sigma_n^2 I)
 
     The decoder is a trained MLP VAE. Weights are loaded from
-    lip/data/vae_mnist_d{latent_dim}.npz.
-    Train with: python scripts/train_vae.py --latent-dim <dim>
+    lip/data/vae_mnist_d2.npz.
+    Train with: python scripts/train_vae.py
     """
 
     sigma_n: float = 0.2
     sigma_0: float = 1.0
-    latent_dim: int = 2
     weights_path: str = None
     _params: dict = field(default=None, repr=False, init=False)
 
     def __post_init__(self):
         from . import vae
         if self.weights_path is None:
-            self.weights_path = str(_DATA_DIR / f"vae_mnist_d{self.latent_dim}.npz")
+            self.weights_path = str(_DATA_DIR / "vae_mnist_d2.npz")
         self._params, loaded_dim = vae.load_params(self.weights_path)
-        if loaded_dim != self.latent_dim:
+        if loaded_dim != 2:
             raise ValueError(
-                f"Weight file has latent_dim={loaded_dim}, expected {self.latent_dim}"
+                f"Weight file has latent_dim={loaded_dim}, expected 2"
             )
         # Pre-compile the single-sample Jacobian function
         self._jac_fn = jax.jacfwd(lambda z: vae.decode_single(self._params, z))
 
     @property
     def d_latent(self):
-        return self.latent_dim
+        return 2
 
     @property
     def d_pixel(self):
@@ -56,7 +55,7 @@ class MNISTVAE:
         """
         from . import vae
         shape = z.shape[:-1]
-        z_flat = z.reshape(-1, self.d_latent)
+        z_flat = z.reshape(-1, 2)
         x_flat = jax.vmap(lambda zi: vae.decode_single(self._params, zi))(z_flat)
         return x_flat.reshape(*shape, 784)
 
@@ -66,9 +65,9 @@ class MNISTVAE:
         Computed via forward-mode AD (efficient when d_latent << d_pixel).
         """
         shape = z.shape[:-1]
-        z_flat = z.reshape(-1, self.d_latent)
+        z_flat = z.reshape(-1, 2)
         J_flat = jax.vmap(self._jac_fn)(z_flat)
-        return J_flat.reshape(*shape, 784, self.d_latent)
+        return J_flat.reshape(*shape, 784, 2)
 
     def encoder(self, x, *, n_iter=10):
         """VAE encoder: returns posterior mean mu(x).
@@ -82,7 +81,7 @@ class MNISTVAE:
         mu_flat = jax.vmap(
             lambda xi: vae.encode_single(self._params, xi)[0]
         )(x_flat)
-        return mu_flat.reshape(*shape, self.d_latent)
+        return mu_flat.reshape(*shape, 2)
 
     def score(self, z, sigma):
         """Score of the noised prior N(0, sigma_0^2 I): nabla_z log p_sigma(z)."""
@@ -119,24 +118,19 @@ class MNISTVAE:
     def sample_joint(self, key, n):
         """Sample n (z_true, y_obs) pairs."""
         k1, k2 = jax.random.split(key)
-        z = self.sigma_0 * jax.random.normal(k1, (n, self.d_latent))
+        z = self.sigma_0 * jax.random.normal(k1, (n, 2))
         x = self.decoder(z)
         y = x + self.sigma_n * jax.random.normal(k2, x.shape)
         return z, y
 
-    # -- Grid-based calibration (only for d_latent=2) --
+    # -- Grid-based calibration --
 
     def posterior_grid(self, y, *, grid_range=None, grid_size=200):
-        """Evaluate posterior on a 2D grid (only for latent_dim=2).
+        """Evaluate posterior on a 2D grid.
 
         Uses an adaptive fine grid centered on the encoder MAP estimate
         because the MNISTVAE posterior is very concentrated (std ~0.015).
         """
-        if self.d_latent != 2:
-            raise NotImplementedError(
-                f"posterior_grid requires d_latent=2, got {self.d_latent}. "
-                "Use MCMC-based calibration for higher dimensions."
-            )
         if grid_range is None:
             # Adaptive: center on encoder MAP, +/-0.2 covers ~13 stds
             z_map = self.encoder(y)
@@ -174,15 +168,11 @@ class MNISTVAE:
         )(y_batch)
 
     def hpd_level(self, z, y, *, grid_range=4.0, grid_size=200):
-        """HPD credibility level (d_latent=2 only).
+        """HPD credibility level.
 
-        For MNISTVAE, uses an adaptive fine grid centered on the MAP
-        (encoder estimate) because the posterior is very concentrated
-        (std ~0.015) and a coarse grid on [-4,4] cannot resolve it.
+        Uses an adaptive fine grid centered on the MAP (encoder estimate)
+        because the posterior is very concentrated (std ~0.015).
         """
-        if self.d_latent != 2:
-            raise NotImplementedError("hpd_level requires d_latent=2")
-
         def _hpd_single(z_i, y_i):
             # Find MAP via encoder
             z_map = self.encoder(y_i)
@@ -219,26 +209,19 @@ class MNISTVAE:
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 6))
 
-        if self.d_latent == 2:
-            if _grid_cache is not None:
-                z1, z2, p = _grid_cache
-            else:
-                z1, z2, _, _, p, _ = self.posterior_grid(y_star)
-                z1, z2, p = np.array(z1), np.array(z2), np.array(p)
-            ax.contourf(z1, z2, p, levels=30, cmap="Blues", alpha=0.7)
-            ax.contour(z1, z2, p, levels=8, colors="steelblue", linewidths=0.5)
-            samples = np.array(solver_samples)
-            ax.scatter(samples[:, 0], samples[:, 1], s=1, c="red", alpha=0.3,
-                       label="Solver")
-            ax.set_xlabel("z1")
-            ax.set_ylabel("z2")
-            ax.set_aspect("equal")
+        if _grid_cache is not None:
+            z1, z2, p = _grid_cache
         else:
-            samples = np.array(solver_samples)
-            ax.scatter(samples[:, 0], samples[:, 1], s=1, c="red", alpha=0.3,
-                       label="Solver")
-            ax.set_xlabel("z1")
-            ax.set_ylabel("z2")
+            z1, z2, _, _, p, _ = self.posterior_grid(y_star)
+            z1, z2, p = np.array(z1), np.array(z2), np.array(p)
+        ax.contourf(z1, z2, p, levels=30, cmap="Blues", alpha=0.7)
+        ax.contour(z1, z2, p, levels=8, colors="steelblue", linewidths=0.5)
+        samples = np.array(solver_samples)
+        ax.scatter(samples[:, 0], samples[:, 1], s=1, c="red", alpha=0.3,
+                   label="Solver")
+        ax.set_xlabel("z1")
+        ax.set_ylabel("z2")
+        ax.set_aspect("equal")
 
         ax.set_title(title)
         ax.legend(fontsize=8)

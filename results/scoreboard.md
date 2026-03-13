@@ -1,6 +1,6 @@
 # Scoreboard -- Best Results per Method on MNISTVAE
 
-## MNISTVAE (latent_dim=2, sigma_n=0.2)
+## MNISTVAE (sigma_n=0.2)
 
 | Method | HPD mean | KS stat | Iter | Notes |
 |--------|----------|---------|------|-------|

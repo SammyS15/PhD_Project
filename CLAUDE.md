@@ -29,9 +29,9 @@ python experiment.py               # Quick prototype / scratch pad
 ## Repository Structure
 
 - `lip/` -- Minimal JAX library for posterior sampling benchmarks (installable via `pip install -e .`)
-  - `problems.py` -- `MNISTVAE` dataclass: pretrained MLP VAE decoder on MNIST. `D: R^d -> [0,1]^784`. Supports `latent_dim=2` (grid-based calibration) and `latent_dim=20`.
+  - `problems.py` -- `MNISTVAE` dataclass: pretrained MLP VAE decoder on MNIST. `D: R^2 -> [0,1]^784`. Grid-based exact calibration.
   - `vae.py` -- Pure-JAX VAE forward pass (encoder/decoder) with weight loading from `.npz`.
-  - `data/` -- Pretrained VAE weights (`vae_mnist_d2.npz`, `vae_mnist_d20.npz`).
+  - `data/` -- Pretrained VAE weights (`vae_mnist_d2.npz`).
   - `solvers/` -- One file per solver, signature `(problem, y, key, **kwargs) -> z`.
     - `oracle_langevin.py` -- ULA on exact log-posterior (reference/oracle)
     - `latent_latino.py` -- LATINO encode-denoise-decode-proximal (Spagnoletti et al., 2025)

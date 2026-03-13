@@ -10,7 +10,7 @@ You are an autonomous research agent. Read this file completely before every ite
 lip/                    -- JAX library (pip install -e .)
   problems.py           -- MNISTVAE problem definition
   vae.py                -- Pure-JAX VAE forward pass (encoder/decoder)
-  data/                 -- Pretrained VAE weights (vae_mnist_d2.npz, vae_mnist_d20.npz)
+  data/                 -- Pretrained VAE weights (vae_mnist_d2.npz)
   metrics.py            -- latent_calibration_test, latent_benchmark
   solvers/              -- one file per solver
     oracle_langevin.py  -- ULA on exact log-posterior (reference)
@@ -38,7 +38,7 @@ archive/                -- previous experiments (1D Gaussian, 2D toy problems, o
 
 | Property | Value |
 |----------|-------|
-| Problem | `MNISTVAE(latent_dim=2, sigma_n=0.2)` |
+| Problem | `MNISTVAE(sigma_n=0.2)` |
 | Decoder | Pretrained MLP VAE `D: R^2 -> [0,1]^784` (28x28 images) |
 | Observation model | `y = D(z*) + sigma_n * eps` |
 | Ground truth | Grid-exact posterior (adaptive fine grid centered on MAP) |
@@ -92,7 +92,7 @@ from lip import MNISTVAE
 from lip.metrics import latent_calibration_test
 import jax
 
-problem = MNISTVAE(latent_dim=2, sigma_n=0.2)
+problem = MNISTVAE(sigma_n=0.2)
 result = latent_calibration_test(problem, my_solver, jax.random.PRNGKey(0), n=200)
 print(f"HPD mean: {result['hpd_mean']:.3f} (target: 0.500)")
 ```
@@ -209,7 +209,7 @@ The true posterior is computed by adaptive fine grid evaluation centered on the 
 
 ## 6. Seed Hypotheses
 
-All experiments target `MNISTVAE(latent_dim=2, sigma_n=0.2)`.
+All experiments target `MNISTVAE(sigma_n=0.2)`.
 
 **H1: Annealed Langevin with learned noise schedule.** Oracle Langevin works but uses a fixed lr. Try annealing the step size (warm-up then decay) to mix faster while maintaining calibration.
 
@@ -249,7 +249,7 @@ As you accumulate results, propose new hypotheses in `results/insights.md`.
 
 **Signs you should add a new test problem:**
 - Solution works very well and methods are hard to distinguish
-- Need to test scaling to higher dimensions (latent_dim=20)
+- Need to test scaling to higher dimensions (future work)
 
 **Track in `results/insights.md`:**
 ```markdown
@@ -279,7 +279,7 @@ rozet2024, chung2023, spagnoletti2025, achituve2025, wu2024_pnpdm, askari2025, g
 
 ## 9. Completion
 
-Output `<promise>BREAKTHROUGH</promise>` if you achieve hpd_mean in [0.45, 0.55] AND hpd_ks < 0.1 on MNISTVAE(latent_dim=2, sigma_n=0.2) with a **diffusion-based method** -- i.e., one that uses the score function `grad log p_t(z)` at various noise levels as its generative prior, combined with some form of likelihood guidance. Oracle Langevin bypasses the diffusion framework entirely (direct MCMC on the exact posterior) and does not count.
+Output `<promise>BREAKTHROUGH</promise>` if you achieve hpd_mean in [0.45, 0.55] AND hpd_ks < 0.1 on MNISTVAE(sigma_n=0.2) with a **diffusion-based method** -- i.e., one that uses the score function `grad log p_t(z)` at various noise levels as its generative prior, combined with some form of likelihood guidance. Oracle Langevin bypasses the diffusion framework entirely (direct MCMC on the exact posterior) and does not count.
 
 Otherwise iterate until `--max-iterations`, then write `results/summary.md`.
 
