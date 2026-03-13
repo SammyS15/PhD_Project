@@ -176,17 +176,6 @@ class MNISTVAE:
                 jnp.array(data["p"]), float(data["dz"]),
                 jnp.array(data["y"]))
 
-    def posterior_mean_cov(self, y, **grid_kw):
-        """Posterior mean and covariance via grid integration."""
-        z1, z2, p, dz, _ = self.posterior_grid(y, **grid_kw)
-        Z1, Z2 = jnp.meshgrid(z1, z2)
-        mu1 = jnp.sum(Z1 * p) * dz
-        mu2 = jnp.sum(Z2 * p) * dz
-        var1 = jnp.sum((Z1 - mu1) ** 2 * p) * dz
-        var2 = jnp.sum((Z2 - mu2) ** 2 * p) * dz
-        cov12 = jnp.sum((Z1 - mu1) * (Z2 - mu2) * p) * dz
-        return jnp.array([mu1, mu2]), jnp.array([[var1, cov12], [cov12, var2]])
-
     def hpd_level(self, z, y, *, hpd_range=0.3, grid_size=200):
         """HPD credibility level using adaptive grid centered on z.
 
@@ -238,27 +227,3 @@ class MNISTVAE:
         ax.legend(fontsize=8)
         return ax
 
-    def plot_reconstruction(self, z, y=None, ax=None):
-        """Plot decoded image from latent z, optionally alongside observation y."""
-        import matplotlib.pyplot as plt
-
-        x = np.array(self.decoder(z)).reshape(28, 28)
-        n_panels = 1 if y is None else 2
-        if ax is None:
-            _, axes = plt.subplots(1, n_panels, figsize=(3 * n_panels, 3))
-            if n_panels == 1:
-                axes = [axes]
-        else:
-            axes = [ax]
-
-        axes[0].imshow(x, cmap="gray", vmin=0, vmax=1)
-        axes[0].set_title("Decoder(z)")
-        axes[0].axis("off")
-
-        if y is not None and len(axes) > 1:
-            y_img = np.array(y).reshape(28, 28)
-            axes[1].imshow(y_img, cmap="gray")
-            axes[1].set_title("Observation y")
-            axes[1].axis("off")
-
-        return axes

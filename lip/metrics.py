@@ -38,19 +38,10 @@ def latent_calibration_test(problem, solver, key, *, n=500, **solver_kw):
 
 
 def latent_posterior_test(problem, solver, y, key, *, n=5000, **solver_kw):
-    """Many samples for a fixed y. Returns solver sample stats vs grid posterior."""
+    """Run solver for a fixed y, returning samples for plotting."""
     y_batch = jnp.broadcast_to(y, (n, *y.shape))
     z_samples = solver(problem, y_batch, key, **solver_kw)
-
-    mu_grid, cov_grid = problem.posterior_mean_cov(y)
-    return {
-        "mean": jnp.asarray(z_samples.mean(axis=0)),
-        "cov": jnp.asarray(jnp.cov(z_samples.T)),
-        "target_mean": jnp.asarray(mu_grid),
-        "target_cov": jnp.asarray(cov_grid),
-        "y_star": jnp.asarray(y),
-        "samples": z_samples,
-    }
+    return {"samples": z_samples}
 
 
 def latent_benchmark(problem, solvers=None, key=None, *, y_star=None,
@@ -105,10 +96,10 @@ def _save_latent_results(problem, results, y_star, output_dir, z_star=None):
     grid_path = output_dir / "posterior_grid.npz"
     if grid_path.exists():
         print("Loading cached posterior grid...")
-        z1, z2, p, dz, _y = problem.load_posterior_grid(grid_path)
+        z1, z2, p, _, _y = problem.load_posterior_grid(grid_path)
     else:
         print("Computing posterior grid (one-time, ~36s)...")
-        z1, z2, p, dz = problem.save_posterior_grid(y_star, grid_path)
+        z1, z2, p, _ = problem.save_posterior_grid(y_star, grid_path)
     grid_cache = (np.array(z1), np.array(z2), np.array(p))
 
     problem_name = type(problem).__name__.lower()
@@ -168,16 +159,10 @@ def _save_latent_results(problem, results, y_star, output_dir, z_star=None):
         plt.close(fig)
 
     # JSON summary
-    def _to_list(v):
-        return v.tolist() if hasattr(v, 'tolist') else v
-
     json_results = {
         "problem": type(problem).__name__,
-        "y_star": _to_list(y_star),
         "solvers": {
             name: {
-                "mean": _to_list(r["mean"]),
-                "target_mean": _to_list(r["target_mean"]),
                 "hpd_mean": r["hpd_mean"],
                 "hpd_std": r["hpd_std"],
                 "hpd_ks": r["hpd_ks"],
