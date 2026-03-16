@@ -208,4 +208,9 @@ __marimo__/
 
 results/*
 !results/*.md
-papers/*.pdf
+papers/*.pdflogs/
+run_sweep.sbatch
+
+
+logs/
+run_sweep.sbatch
