@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 
 
-def _oracle_langevin_single(problem, y, key, *, N=3000, lr=5e-7):
+def _oracle_langevin_single(problem, y, key, *, N=3000, lr):
     """Single-sample ULA on exact log-posterior with lax.scan."""
     d = problem.d_latent
     z = problem.encoder(y)
@@ -29,27 +29,42 @@ def _oracle_langevin_single(problem, y, key, *, N=3000, lr=5e-7):
     return z
 
 
-# JIT-compiled version for speed
-_jit_solve = None
+# JIT cache: single-sample and vmapped batch versions
+_jit_single = None
+_jit_batch = None
 _jit_config = None
 
 
-def oracle_langevin(problem, y, key, *, N=3000, lr=5e-7, **kwargs):
-    """ULA on exact log-posterior, initialized from encoder."""
-    global _jit_solve, _jit_config
+def oracle_langevin(problem, y, key, *, N=3000, lr=None, batch_size=0,
+                    **kwargs):
+    """ULA on exact log-posterior, initialized from encoder.
+
+    lr defaults to 5e-7 * (sigma_n / 0.2)^2, scaling with posterior width.
+    """
+    global _jit_single, _jit_batch, _jit_config
+
+    if lr is None:
+        lr = 5e-7 * (problem.sigma_n / 0.2) ** 2
 
     config = (id(problem), N, lr)
-    if _jit_solve is None or _jit_config != config:
-        _jit_solve = jax.jit(
-            lambda y, key: _oracle_langevin_single(problem, y, key, N=N, lr=lr)
+    if _jit_single is None or _jit_config != config:
+        _fn = lambda y, key: _oracle_langevin_single(
+            problem, y, key, N=N, lr=lr,
         )
+        _jit_single = jax.jit(_fn)
+        _jit_batch = jax.jit(jax.vmap(_fn))
         _jit_config = config
 
     if y.ndim == 1:
-        return _jit_solve(y, key)
+        return _jit_single(y, key)
 
     keys = jax.random.split(key, y.shape[0])
-    results = []
-    for i in range(y.shape[0]):
-        results.append(_jit_solve(y[i], keys[i]))
-    return jnp.stack(results)
+    n = y.shape[0]
+
+    if batch_size <= 0 or n <= batch_size:
+        return _jit_batch(y, keys)
+
+    chunks = []
+    for i in range(0, n, batch_size):
+        chunks.append(_jit_batch(y[i:i+batch_size], keys[i:i+batch_size]))
+    return jnp.concatenate(chunks)

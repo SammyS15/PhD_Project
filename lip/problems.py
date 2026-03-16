@@ -81,6 +81,21 @@ class MNISTVAE:
         )(x_flat)
         return mu_flat.reshape(*shape, 2)
 
+    # --- Linear measurement operators for PSLD ---
+    # MNISTVAE uses y = D(z) + noise (full observation, A = I in pixel space).
+
+    def forward_op(self, x):
+        """A·x: identity (full observation)."""
+        return x
+
+    def transpose_op(self, y):
+        """Aᵀ·y: identity."""
+        return y
+
+    def project_to_measurements(self, x, y):
+        """Aᵀy + (I - AᵀA)x = y for A = I (full observation)."""
+        return y
+
     def score(self, z, sigma):
         """Score of the noised prior N(0, sigma_0^2 I): nabla_z log p_sigma(z)."""
         return -z / (self.sigma_0**2 + sigma**2)
@@ -214,7 +229,9 @@ class MNISTVAE:
         else:
             z1, z2, p, _, _ = self.posterior_grid(y_star)
             z1, z2, p = np.array(z1), np.array(z2), np.array(p)
-        ax.contourf(z1, z2, p, levels=30, cmap="Blues", alpha=0.7)
+        pmax = p.max()
+        levels = np.linspace(0.02 * pmax, pmax, 30)
+        ax.contourf(z1, z2, p, levels=levels, cmap="Blues", alpha=0.7)
         ax.contour(z1, z2, p, levels=8, colors="steelblue", linewidths=0.5)
         samples = np.array(solver_samples)
         ax.scatter(samples[:, 0], samples[:, 1], s=1, c="red", alpha=0.3,

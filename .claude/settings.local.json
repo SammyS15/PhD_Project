@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"exit: $?\")",
+      "Bash(source .venv/bin/activate)",
+      "Bash(pip show tarp)",
+      "Bash(python3 -m pip show tarp)",
+      "Bash(pip3 show tarp)",
+      "Bash(.venv/bin/python -c \"from mira_score import get_device, mira, mira_bootstrap; print\\(''mira_score available''\\)\")",
+      "Bash(.venv/bin/python -c \"from mira_score import get_device, mira, mira_bootstrap; print\\(''ok''\\)\")",
+      "Bash(python -c \"from mira_score import get_device, mira, mira_bootstrap; print\\(''ok''\\)\")",
+      "Bash(python3 -c \"from mira_score import get_device, mira, mira_bootstrap; print\\(''ok''\\)\")"
+    ]
+  }
+}
